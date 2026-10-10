@@ -41,6 +41,12 @@ struct ZoomState {
         offset = .zero
     }
 
+    /// 容器尺寸变了（比如预览窗口被拖大）要重算平移边界，否则会拖出空白
+    mutating func setContainer(_ size: CGSize) {
+        containerSize = size
+        clampOffset()
+    }
+
     mutating func zoom(by factor: CGFloat) {
         setScale(scale * factor)
     }

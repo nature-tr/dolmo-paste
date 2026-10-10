@@ -74,7 +74,8 @@ enum SnapshotRunner {
                         let preview = HStack(alignment: .top, spacing: 12) {
                             ClipPanelView(viewModel: hoverModel, theme: theme)
                                 .frame(width: theme.panelWidth, height: panelHeight)
-                            HoverPreviewView(model: model, theme: theme, showHint: false, onClose: {})
+                            HoverPreviewView(model: model, theme: theme, showHint: false,
+                                             onClose: {}, onToggleZoom: {})
                                 .frame(width: card.width, height: card.height)
                                 .padding(.top, cardTop)
                         }

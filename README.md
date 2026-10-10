@@ -11,7 +11,7 @@ macOS 剪贴板管理器。常驻菜单栏，记住你复制过的东西，键�
 - **一步粘贴** — 写回剪贴板并模拟 `⌘V` 直接粘入原 App（需辅助功能权限），支持纯文本粘贴
 - **Quick Paste** — `⌘1~9` 快速粘贴前 9 条
 - **Pin 固定** — 固定常用片段，永不过期
-- **图片查看** — 悬停预览（滚轮/捏合缩放、平移、双击适应）+ 全屏大图查看器
+- **图片查看** — 悬停预览（窗口可拖边/拖角放大，滚轮/捏合做卡内放大镜、可平移，双击适应）+ 全屏大图查看器
 - **截图 OCR** — Vision 识别图片内文字，搜索可命中
 - **两套主题** — 跟手系统样式 / 自研 dolmo design（暖纸、橙色强调）
 
@@ -22,7 +22,7 @@ macOS 剪贴板管理器。常驻菜单栏，记住你复制过的东西，键�
 要求 macOS 14+，已安装 Xcode 命令行工具。
 
 ```bash
-git clone https://github.com/<your-name>/dolmo-paste.git
+git clone https://github.com/nature-tr/dolmo-paste.git
 cd dolmo-paste
 ./build.sh                                    # 产出 dolmo-paste/build/dolmo paste.app
 cp -r "build/dolmo paste.app" /Applications/  # 建议装到这里，权限和开机启动才稳

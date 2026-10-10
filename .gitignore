@@ -2,8 +2,8 @@
 .workbuddy/
 
 # Xcode / SwiftPM 构建产物
-.build/
-build/
+**/.build/
+**/build/
 DerivedData/
 *.xcuserdatad/
 *.app/
@@ -13,8 +13,10 @@ DerivedData/
 .DS_Store
 *.swp
 
-# 设计评审截图（体积大，仅保留评审结论 markdown）
-design-review/r*/
-design-review/v*/
-design-review/_view/
-design-review/final/
+# 设计评审截图（体积大，--snapshot 可随时重生成，只留评审结论 markdown）
+**/design-review/r*/
+**/design-review/v*/
+**/design-review/_view/
+**/design-review/final/
+**/design-review/*.jpg
+**/design-review/*.png

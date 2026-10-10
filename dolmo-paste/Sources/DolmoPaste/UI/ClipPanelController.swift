@@ -213,8 +213,14 @@ final class ClipPanelController {
     private func installEventMonitor() {
         removeEventMonitor()
         // 滚轮 / 捏合也要监听：鼠标在贴边预览上时要交给预览做缩放
-        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged, .scrollWheel, .magnify]) { [weak self] event in
+        // mouseMoved 也要监听：鼠标移到预览上时把 key 交给它，
+        // 不然捏合/滚轮会派发给前台别的 App，预览收不到手势
+        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged, .scrollWheel, .magnify, .mouseMoved]) { [weak self] event in
             guard let self else { return event }
+            if event.type == .mouseMoved {
+                self.preview.takeKeyIfMouseInside()
+                return event
+            }
             if event.type == .flagsChanged {
                 // 只按 ⌘（不带 ⇧⌥⌃）才亮序号，避免 ⌘⇧ 之类的组合键闪一下
                 let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
@@ -262,6 +268,10 @@ final class ClipPanelController {
 
     private func handle(_ event: NSEvent) -> Bool {
         if isComposing() { return false }
+
+        // 预览抢了 key（鼠标停在它上面）时，按键必须先回到主面板：
+        // 否则敲字全丢，快捷键也走不到搜索框
+        if preview.isKey { preview.resignKey(); panel.makeKey() }
 
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let chars = event.charactersIgnoringModifiers ?? ""
@@ -379,8 +389,10 @@ final class ClipPanelController {
 
     @objc private func panelDidResignKey() {
         // 点到别的地方就收起来，不用手动 Esc
+        // 鼠标移到预览上时它会拿走 key，这不是"点到别处"，不能把面板收了
+        guard !preview.isKey else { return }
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.isVisible else { return }
+            guard let self, self.isVisible, !self.preview.isKey else { return }
             self.hide()
         }
     }
