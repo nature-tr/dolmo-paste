@@ -23,3 +23,5 @@ DerivedData/
 **/design-review/final/
 **/design-review/*.jpg
 **/design-review/*.png
+# 上架产物（大体积 .pkg/.app，可随时用 AppStore/build_appstore.sh 重生成）
+AppStore/build/

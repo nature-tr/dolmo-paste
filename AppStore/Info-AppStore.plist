@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>dolmo paste</string>
+    <key>CFBundleDisplayName</key>
+    <string>dolmo paste</string>
+    <key>CFBundleIdentifier</key>
+    <string>top.dolmo.paste.app</string>
+    <key>CFBundleExecutable</key>
+    <string>DolmoPaste</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <!-- macOS 11+ 要求显式声明，codesign 会据此校验 Info.plist -->
+    <key>PRODUCT_BUNDLE_IDENTIFIER</key>
+    <string>top.dolmo.paste.app</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>zh_CN</string>
+    <key>CFBundleLocalizations</key>
+    <array>
+        <string>zh_CN</string>
+    </array>
+    <key>LSUIElement</key>
+    <true/>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+    <key>NSSupportsAutomaticTermination</key>
+    <false/>
+
+    <!-- 辅助功能用途说明：模拟 ⌘V 把选中内容粘进当前 App -->
+    <key>NSAccessibilityUsageDescription</key>
+    <string>用于把选中的历史内容直接粘贴到你正在使用的 App（模拟 ⌘V），以及把浮窗显示在输入光标旁边。不授权则内容只回到剪贴板。</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>用于把选中的历史内容粘贴到你正在使用的 App。</string>
+</dict>
+</plist>

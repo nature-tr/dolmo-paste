@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Mac App Store 必须开沙盒；资源都落在容器里，代码不用改路径 -->
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+
+    <!-- 剪贴板历史的核心：读系统剪贴板 + 写回选中内容。上架版不做沙盒外写入，
+         所以不需要 com.apple.security.files.user-selected.read-write 之外的文件权限 -->
+    <key>com.apple.security.files.user-selected.read-only</key>
+    <true/>
+
+    <!-- 模拟 ⌘V 需要辅助功能权限。注意：MAS 审核对这项一向严格，
+         2.4.5 / 5.1.1 条款下有被拒风险，审核备注里已如实说明用途 -->
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
+
+    <!-- Vision OCR 在本机跑，不联网；仍声明只读用户选择项以避免权限弹窗歧义 -->
+    <key>com.apple.security.device.audio-input</key>
+    <false/>
+</dict>
+</plist>
