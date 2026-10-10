@@ -407,13 +407,28 @@ final class ClipStore: ObservableObject {
         Task.detached(priority: .background) {
             for (id, fileName) in pending {
                 let text = Self.recognizeText(at: directory.appendingPathComponent(fileName))
-                await MainActor.run { self.applyOCR(text, to: id) }
+                // 批量：每张只写属性，末尾统一保存 + 刷新一次。
+                // 原来每张都 save + refresh（各 fetch 数百条并触发 UI 重绘），200 张会卡很久
+                await MainActor.run { self.applyOCR(text, to: id, refresh: false) }
+            }
+            await MainActor.run {
+                try? self.context.save()
+                self.refresh()
             }
         }
     }
 
     /// 写回结果。识别失败也写 ""，下次启动就不会重复扫同一张
-    private func applyOCR(_ text: String?, to id: PersistentIdentifier) {
+    private func applyOCR(_ text: String?, to id: PersistentIdentifier, refresh: Bool = true) {
+        applyOCRResult(text, to: id)
+        if refresh {
+            try? context.save()
+            self.refresh()
+        }
+    }
+
+    /// 只写属性，不保存也不刷新。批量回填时用它，最后统一落盘
+    private func applyOCRResult(_ text: String?, to id: PersistentIdentifier) {
         guard let item = context.model(for: id) as? ClipItem else { return }
         // 没识别出文字也写一个空格标记：SwiftData 里 NULL 和空串都读成 ""，
         // 不标记的话这些图每次启动都会被重扫一遍
@@ -422,8 +437,6 @@ final class ClipStore: ObservableObject {
         if !result.isEmpty, item.pinyinIndex?.isEmpty != false {
             item.pinyinIndex = Pinyin.index(for: result)
         }
-        try? context.save()
-        refresh()
     }
 
     nonisolated private static func recognizeText(at url: URL) -> String? {

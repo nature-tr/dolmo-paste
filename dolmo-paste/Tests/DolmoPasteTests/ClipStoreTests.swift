@@ -115,6 +115,32 @@ final class ClipStoreTests: XCTestCase {
         }
     }
 
+    /// 文件类条目：原文件被删/移动后不能静默失败，要如实返回并降级成文件名
+    func testPasteEngineReportsUnreachableFiles() {
+        let pasteboard = NSPasteboard.general
+        let saved = pasteboard.pasteboardItems?.compactMap { item -> (NSPasteboard.PasteboardType, Data)? in
+            guard let type = item.types.first, let data = item.data(forType: type) else { return nil }
+            return (type, data)
+        }
+        defer {
+            pasteboard.clearContents()
+            if let saved, !saved.isEmpty {
+                for (index, entry) in saved.enumerated() where index == 0 {
+                    pasteboard.setData(entry.1, forType: entry.0)
+                }
+            }
+        }
+
+        let missing = ClipItem(kind: .file, textContent: "/不存在的路径/a.txt", contentHash: "missing-file")
+        missing.filePaths = ["/绝对不存在的目录/dolmo-测试.txt"]
+        missing.fileNames = ["dolmo-测试.txt"]
+        let ok = PasteEngine.writeToPasteboard(missing, plainTextOnly: false,
+                                               imagesDirectory: FileManager.default.temporaryDirectory)
+        XCTAssertFalse(ok, "文件已失效时必须返回 false，不能假装成功")
+        // 降级：至少把文件名写进去，用户还能拿到文字而不是空剪贴板
+        XCTAssertEqual(pasteboard.string(forType: .string), "dolmo-测试.txt")
+    }
+
     func testHugeTextIsCappedBeforeStoring() {
         // 复制几百 MB 日志时不能全量入库：这里直接验证截断函数的收敛行为
         let huge = String(repeating: "abcdefghij", count: 200_000)

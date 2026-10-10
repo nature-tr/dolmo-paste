@@ -16,7 +16,11 @@ enum PasteEngine {
         }
     }
 
-    static func writeToPasteboard(_ item: ClipItem, plainTextOnly: Bool, imagesDirectory: URL) {
+    /// 把历史项写回剪贴板。
+    /// - Returns: 是否按预期类型写成功。文件类在**原文件已失效**时返回 false，
+    ///   调用方据此提示用户，而不是让用户对着一个写不进去的剪贴板发懵。
+    @discardableResult
+    static func writeToPasteboard(_ item: ClipItem, plainTextOnly: Bool, imagesDirectory: URL) -> Bool {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
 
@@ -34,20 +38,28 @@ enum PasteEngine {
             } else {
                 pasteboard.setString(item.textContent, forType: .string)
             }
+            return image != nil
 
         case .file:
-            let urls = item.filePaths.map { URL(fileURLWithPath: $0) }
-            if !urls.isEmpty {
-                pasteboard.writeObjects(urls.map { $0 as NSURL })
-            } else {
-                pasteboard.setString(item.textContent, forType: .string)
+            // 原文件可能已被删除或移动：写进去的引用粘不出来，静默失败最难受。
+            // 先过滤掉不可达的，全部失效时降级成文件名文本，并如实告诉调用方
+            let reachable = item.filePaths
+                .map { URL(fileURLWithPath: $0) }
+                .filter { (try? $0.checkResourceIsReachable()) == true }
+            if !reachable.isEmpty {
+                pasteboard.writeObjects(reachable.map { $0 as NSURL })
+                return reachable.count == item.filePaths.count
             }
+            let names = item.fileNames.joined(separator: "\n")
+            pasteboard.setString(names.isEmpty ? item.textContent : names, forType: .string)
+            return false
 
         default:
             pasteboard.setString(item.textContent, forType: .string)
             if !plainTextOnly, let rtf = item.rtfData {
                 pasteboard.setData(rtf, forType: .rtf)
             }
+            return true
         }
     }
 
