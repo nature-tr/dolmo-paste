@@ -7,12 +7,12 @@ import SwiftUI
 final class PreviewPanelModel: ObservableObject {
     @Published private(set) var item: ClipItem?
     @Published private(set) var image: NSImage?
-    /// 放大镜：图片在卡片内缩放 + 平移
     @Published var zoom = ZoomState()
     @Published private(set) var caption: String = ""
-
-    /// 缩放过就认为用户"抓住"了这张图，钉住不再自动消失
-    var isPinned: Bool { zoom.isZoomed }
+    // 用户保留预览与图片倍率无关，回到 Fit 也不应突然切图。
+    @Published private(set) var isPinned = false
+    func pin() { isPinned = true }
+    func endSession() { isPinned = false; zoom.reset() }
 
     func show(_ item: ClipItem, imagesDirectory: URL) {
         let isSame = self.item?.id == item.id
@@ -34,7 +34,7 @@ final class PreviewPanelModel: ObservableObject {
             loaded = NSImage(data: data)
         }
         image = loaded
-        zoom.pixelSize = loaded?.size ?? .zero
+        zoom.setImagePixels(ImagePixelGeometry.size(of: loaded))
 
         var parts = ["\(item.imageWidth) × \(item.imageHeight)"]
         if item.imageTruncated { parts.append("仅缩略图") }
@@ -52,10 +52,8 @@ struct HoverPreviewView: View {
     /// 缩放提示只在前几次出现，学会了就不再打扰
     let showHint: Bool
     let onClose: () -> Void
-    /// 双击：已缩放就回到适应，否则放到原图 1:1
-    let onToggleZoom: () -> Void
-
-    @State private var dragStart: CGSize = .zero
+    let onInteraction: () -> Void
+    let onWindowDrag: () -> Void
 
     static let framePadding: CGFloat = 6
     static let footerHeight: CGFloat = 28
@@ -145,11 +143,11 @@ struct HoverPreviewView: View {
             Text(verbatim: footerText)
                 .foregroundStyle(theme.secondaryText)
             Spacer(minLength: 8)
-            if model.zoom.isZoomed {
+            if model.isPinned {
                 Text(verbatim: model.zoom.percentText)
                     .foregroundStyle(theme.secondaryText)
             } else if showHint {
-                Text("捏合缩放 · 可拖边放大")
+                Text("捏合缩放 · 拖空白移动")
                     .foregroundStyle(theme.tertiaryText)
             }
         }
@@ -158,6 +156,7 @@ struct HoverPreviewView: View {
         .lineLimit(1)
         .padding(.horizontal, 4)
         .frame(height: Self.footerHeight)
+        .overlay { NativeWindowDragArea(onDrag: onWindowDrag) }
     }
 
     private var footerText: String {
@@ -165,43 +164,15 @@ struct HoverPreviewView: View {
         return "\(model.caption) · \(TimeFormat.relative(item.copiedAt))"
     }
 
-    /// 放大镜：图片在框里缩放 + 平移。整窗变大走系统原生的拖边，不在这里
     private var canvas: some View {
-        GeometryReader { geo in
-            Group {
-                if let image = model.image {
-                    Image(nsImage: image)
-                        .resizable()
-                        .scaledToFit()
-                        .scaleEffect(model.zoom.scale, anchor: .center)
-                        .offset(model.zoom.offset)
-                        .gesture(dragGesture)
-                        .onTapGesture(count: 2, perform: onToggleZoom)
-                        .animation(.easeOut(duration: 0.1), value: model.zoom.scale)
-                } else {
-                    Text("图片已失效")
-                        .font(.system(size: 12))
-                        .foregroundStyle(theme.secondaryText)
+        NativeImageCanvas(image: model.image, zoom: $model.zoom, movesWindow: true,
+                          onInteraction: onInteraction, onWindowDrag: onWindowDrag)
+            .overlay {
+                if model.image == nil {
+                    Text("图片已失效").font(.system(size: 12)).foregroundStyle(theme.secondaryText)
+                        .allowsHitTesting(false)
                 }
             }
-            .frame(width: geo.size.width, height: geo.size.height)
-            .clipped()
-            .onAppear { model.zoom.setContainer(geo.size) }
-            .onChange(of: geo.size) { _, new in model.zoom.setContainer(new) }
-        }
-    }
-
-    /// 拖动平移（放大之后才用得上）
-    private var dragGesture: some Gesture {
-        DragGesture(minimumDistance: 2)
-            .onChanged { value in
-                model.zoom.pan(by: CGSize(
-                    width: value.translation.width - dragStart.width,
-                    height: value.translation.height - dragStart.height
-                ))
-                dragStart = value.translation
-            }
-            .onEnded { _ in dragStart = .zero }
     }
 
     private var closeButton: some View {
@@ -226,14 +197,19 @@ private final class PreviewPanel: NSPanel {
 }
 
 @MainActor
-final class ImagePreviewController {
+final class ImagePreviewController: NSObject, NSWindowDelegate {
     private let model = PreviewPanelModel()
     private let panel: PreviewPanel
     private var hosting: NSHostingView<HoverPreviewView>!
     private var autoHideWork: DispatchWorkItem?
     private var showWork: DispatchWorkItem?
     private var globalMonitor: Any?
-    private var resizeObserver: NSObjectProtocol?
+    private var generation = 0
+    private var hoveredItemID: UUID?
+    private var detached = false
+    private var isHiding = false
+    var onResignKey: (() -> Void)?
+    var onClosePreview: (() -> Void)?
 
     /// 贴合的主面板位置变化时跟着走
     weak var anchorWindow: NSWindow?
@@ -242,6 +218,7 @@ final class ImagePreviewController {
     var isPinned: Bool { model.isPinned }
     /// 当前是不是 key 窗口（主面板靠它判断要不要收起自己）
     var isKey: Bool { panel.isKeyWindow }
+    func owns(_ event: NSEvent) -> Bool { event.window === panel }
 
     init(theme: PanelTheme) {
         let size = HoverPreviewView.cardSize(forPixel: .zero)
@@ -264,15 +241,11 @@ final class ImagePreviewController {
         panel.acceptsMouseMovedEvents = true
 
         self.theme = theme
+        super.init()
         hosting = NSHostingView(rootView: makeView())
         panel.contentView = hosting
-
-        // 用户手动拖过的大小要记下来，下次预览沿用
-        resizeObserver = NotificationCenter.default.addObserver(
-            forName: NSWindow.didResizeNotification, object: panel, queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in self?.persistScale() }
-        }
+        panel.delegate = self
+        panel.isMovableByWindowBackground = false
     }
 
     private var theme: PanelTheme
@@ -286,8 +259,9 @@ final class ImagePreviewController {
             model: model,
             theme: theme,
             showHint: showHint,
-            onClose: { [weak self] in self?.hide() },
-            onToggleZoom: { [weak self] in self?.toggleZoom() }
+            onClose: { [weak self] in self?.hide(); self?.onClosePreview?() },
+            onInteraction: { [weak self] in self?.pin() },
+            onWindowDrag: { [weak self] in self?.pin(); self?.detached = true }
         )
     }
 
@@ -299,16 +273,10 @@ final class ImagePreviewController {
 
     // MARK: 尺寸
 
-    /// 用户偏好的整体倍数：拖过一次之后记下来，下次预览还是这么大
-    private static let scaleKey = "previewCardScale"
-    private var cardScale: CGFloat {
-        let v = UserDefaults.standard.object(forKey: Self.scaleKey) as? CGFloat
-        return min(max(v ?? 1, 0.5), 3)
-    }
-
-    private var pixel: CGSize {
-        CGSize(width: CGFloat(model.item?.imageWidth ?? 0), height: CGFloat(model.item?.imageHeight ?? 0))
-    }
+    /// 只保存用户 live-resize 完成后的二维尺寸；程序化布局不写设置。
+    private static let widthKey = "previewWindowWidth"
+    private static let heightKey = "previewWindowHeight"
+    private var pixel: CGSize { model.zoom.pixelSize }
 
     /// 默认卡片里图片区的尺寸
     private func defaultImageArea() -> CGSize {
@@ -326,50 +294,51 @@ final class ImagePreviewController {
 
     private func applyCardSize() {
         let base = defaultImageArea()
-        let scale = cardScale
         let visible = visibleFrame()
-        let maxW = visible.width - 24 - HoverPreviewView.chrome.width
-        let maxH = visible.height - 24 - HoverPreviewView.chrome.height
-        // 不许超出屏幕，也不许缩到 260 宽以下
-        let k = min(scale, maxW / max(base.width, 1), maxH / max(base.height, 1))
-        let grown = max(k, 260 / max(base.width * k, 1))
-        let size = CGSize(width: (base.width * grown + HoverPreviewView.chrome.width).rounded(),
-                          height: (base.height * grown + HoverPreviewView.chrome.height).rounded())
+        let savedW = UserDefaults.standard.double(forKey: Self.widthKey)
+        let savedH = UserDefaults.standard.double(forKey: Self.heightKey)
+        let size = CGSize(
+            width: min(max(savedW > 0 ? savedW : base.width + HoverPreviewView.chrome.width, 260), visible.width - 24),
+            height: min(max(savedH > 0 ? savedH : base.height + HoverPreviewView.chrome.height, 180), visible.height - 24)
+        )
         // 原生拖拽的上下限：最小别缩没，最大别拖出屏幕
         panel.contentMinSize = CGSize(width: 260, height: 180)
         panel.contentMaxSize = CGSize(width: max(visible.width - 24, 300),
                                       height: max(visible.height - 24, 220))
-        // setContentSize 自己会触发 didResize，必须挡掉：
-        // 否则会被当成"用户拖过"写进持久化，下次再乘一遍，窗口越用越大
-        isApplyingSize = true
         panel.setContentSize(size)
-        DispatchQueue.main.async { self.isApplyingSize = false }
-        hosting.frame = NSRect(origin: .zero, size: size)
         reposition()
     }
 
-    /// 正在由代码设置尺寸（不是用户拖的）
-    private var isApplyingSize = false
-
-    /// 用户拖完窗口后把"相对默认多大"记下来
-    private func persistScale() {
-        guard !isApplyingSize else { return }
-        let base = defaultImageArea()
-        guard base.width > 0 else { return }
-        let area = CGSize(width: panel.frame.width - HoverPreviewView.chrome.width,
-                          height: panel.frame.height - HoverPreviewView.chrome.height)
-        let scale = min(max(area.width / base.width, 0.5), 3)
-        UserDefaults.standard.set(scale, forKey: Self.scaleKey)
+    func windowWillStartLiveResize(_ notification: Notification) { pin() }
+    func windowDidEndLiveResize(_ notification: Notification) {
+        let size = panel.contentView?.bounds.size ?? .zero
+        UserDefaults.standard.set(size.width, forKey: Self.widthKey)
+        UserDefaults.standard.set(size.height, forKey: Self.heightKey)
+    }
+    func windowDidResignKey(_ notification: Notification) {
+        if !isHiding { onResignKey?() }
+    }
+    private func pin() {
+        cancelAutoHide()
+        showWork?.cancel()
+        showWork = nil
+        hoveredItemID = nil
+        generation += 1
+        model.pin()
     }
 
     func show(_ item: ClipItem, imagesDirectory: URL) {
+        guard !panel.isVisible || !model.isPinned || model.item?.id == item.id else { return }
         cancelAutoHide()
+        let isNewSession = !panel.isVisible
+        let changedImage = model.item?.id != item.id
         model.show(item, imagesDirectory: imagesDirectory)
-        if !panel.isVisible {
+        if isNewSession {
+            detached = false
             hosting.rootView = makeView()
             UserDefaults.standard.set(UserDefaults.standard.integer(forKey: Self.hintKey) + 1, forKey: Self.hintKey)
         }
-        applyCardSize()
+        if isNewSession || changedImage { applyCardSize() }
         if !panel.isVisible {
             panel.orderFront(nil)
             installGlobalMonitor()
@@ -381,25 +350,34 @@ final class ImagePreviewController {
 
     /// 带一点延迟再显示：鼠标快速划过列表时不至于每张图都去读一遍原图
     func scheduleShow(_ item: ClipItem, imagesDirectory: URL, delay: TimeInterval = 0.08) {
+        guard !model.isPinned else { return }
         cancelAutoHide()
-        // 已经钉住（缩放过）就不跟着别的行跳
-        if !model.isPinned { focusY = NSEvent.mouseLocation.y }
+        focusY = NSEvent.mouseLocation.y
+        hoveredItemID = item.id
+        generation += 1
+        let token = generation
         showWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            self?.show(item, imagesDirectory: imagesDirectory)
+            guard let self, self.generation == token, self.hoveredItemID == item.id, !self.model.isPinned else { return }
+            self.showWork = nil
+            self.show(item, imagesDirectory: imagesDirectory)
         }
         showWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     func hide() {
+        isHiding = true
+        defer { isHiding = false }
+        generation += 1
+        hoveredItemID = nil
         cancelAutoHide()
         showWork?.cancel()
         showWork = nil
         removeGlobalMonitor()
         if panel.isKeyWindow { panel.resignKey() }
         // 收起来就当作这次预览结束，下次重新显示时不该带着上次的缩放
-        model.zoom.reset()
+        model.endSession()
         panel.orderOut(nil)
     }
 
@@ -420,14 +398,22 @@ final class ImagePreviewController {
     // MARK: 自动隐藏
 
     /// 鼠标离开列表项：先不急着收，留出时间让鼠标移到预览上
+    func endHover(_ item: ClipItem) {
+        guard hoveredItemID == item.id else { return }
+        hoveredItemID = nil
+        generation += 1
+        scheduleAutoHide()
+    }
+
     func scheduleAutoHide() {
         cancelAutoHide()
         showWork?.cancel()
         showWork = nil
         // 缩放过就是用户主动"抓住"了这张图，不自动收
         guard !model.isPinned else { return }
+        let token = generation
         let work = DispatchWorkItem { [weak self] in
-            guard let self else { return }
+            guard let self, self.generation == token, !self.model.isPinned else { return }
             // 不靠 hover 判断鼠标在不在预览上：不激活的面板收不到 mouseMoved。
             // 直接看坐标，鼠标还在预览上就继续等
             if self.panel.frame.contains(NSEvent.mouseLocation) {
@@ -435,6 +421,7 @@ final class ImagePreviewController {
                 return
             }
             self.hide()
+            self.onClosePreview?()
         }
         autoHideWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
@@ -445,52 +432,28 @@ final class ImagePreviewController {
         autoHideWork = nil
     }
 
-    // MARK: 滚轮 / 捏合（放大镜）
+    // MARK: 唯一画布事件入口
 
-    /// 手势 → 缩放系数
-    private static func zoomFactor(for event: NSEvent) -> CGFloat? {
-        switch event.type {
-        case .scrollWheel:
-            guard event.scrollingDeltaY != 0 else { return nil }
-            let sensitivity: CGFloat = event.modifierFlags.contains(.command) ? 0.0015 : 0.0045
-            return exp(event.scrollingDeltaY * sensitivity)
-        case .magnify:
-            guard event.magnification != 0 else { return nil }
-            return 1 + event.magnification
-        default:
-            return nil
-        }
+    private func canvas(in view: NSView) -> ImageCanvasView? {
+        if let canvas = view as? ImageCanvasView { return canvas }
+        return view.subviews.lazy.compactMap { self.canvas(in: $0) }.first
     }
-
-    private func zoom(by factor: CGFloat) {
-        guard model.item != nil else { return }
-        cancelAutoHide()
-        model.zoom.zoom(by: factor)
-    }
-
-    /// 双击：已缩放就回到适应，否则放到原图 1:1
-    private func toggleZoom() {
-        if model.zoom.isZoomed { model.zoom.reset() } else { model.zoom.zoomToActual() }
-    }
-
-    /// 鼠标在预览面板内才吃事件，否则放行给列表滚动
+    /// 本地手势只对当前预览窗口和画布生效，消费后不会再次进入 responder。
     func consume(_ event: NSEvent) -> Bool {
-        guard panel.isVisible, panel.frame.contains(NSEvent.mouseLocation) else { return false }
-        guard let factor = Self.zoomFactor(for: event) else { return false }
-        zoom(by: factor)
-        return true
+        guard panel.isVisible, event.window === panel,
+              let canvas = canvas(in: hosting) else { return false }
+        return canvas.consumeZoom(event)
     }
-
-    /// 兜底：本 App 是菜单栏应用，即便抢了 key 也可能有事件落到别的 App。
-    /// 全局监听能看到"发给别的 App"的那部分，只要鼠标在预览上就照样缩放。
     private func installGlobalMonitor() {
         guard globalMonitor == nil else { return }
-        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollWheel, .magnify]) { [weak self] event in
-            guard let self,
-                  self.panel.isVisible,
-                  self.panel.frame.contains(NSEvent.mouseLocation),
-                  let factor = Self.zoomFactor(for: event) else { return }
-            DispatchQueue.main.async { self.zoom(by: factor) }
+        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .scrollWheel, .magnify]) { [weak self] event in
+            guard let self, self.panel.isVisible else { return }
+            self.takeKeyIfMouseInside()
+            guard event.type != .mouseMoved, let canvas = self.canvas(in: self.hosting) else { return }
+            let screenRect = self.panel.convertToScreen(canvas.convert(canvas.bounds, to: nil))
+            guard screenRect.contains(NSEvent.mouseLocation) else { return }
+            // 全局只补发给其他 App 的事件，仍走同一画布入口；不排队跨会话回写。
+            canvas.applyZoom(event)
         }
     }
 
@@ -505,7 +468,7 @@ final class ImagePreviewController {
 
     /// 贴在主面板旁边：右边放得下就放右边，否则翻到左边
     func reposition() {
-        guard let anchor = anchorWindow else { return }
+        guard !detached, !model.isPinned, let anchor = anchorWindow else { return }
         let size = panel.frame.size
         let anchorFrame = anchor.frame
         let visible = visibleFrame()

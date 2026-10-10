@@ -1,6 +1,9 @@
 # AI 工具工作区数据
 .workbuddy/
 
+# 本地交付/调试产物（zip、日志、临时验证文件）
+outputs/
+
 # Xcode / SwiftPM 构建产物
 **/.build/
 **/build/

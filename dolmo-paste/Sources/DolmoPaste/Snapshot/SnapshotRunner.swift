@@ -75,7 +75,7 @@ enum SnapshotRunner {
                             ClipPanelView(viewModel: hoverModel, theme: theme)
                                 .frame(width: theme.panelWidth, height: panelHeight)
                             HoverPreviewView(model: model, theme: theme, showHint: false,
-                                             onClose: {}, onToggleZoom: {})
+                                             onClose: {}, onInteraction: {}, onWindowDrag: {})
                                 .frame(width: card.width, height: card.height)
                                 .padding(.top, cardTop)
                         }

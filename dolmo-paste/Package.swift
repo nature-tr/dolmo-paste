@@ -11,6 +11,7 @@ let package = Package(
             swiftSettings: [
                 .swiftLanguageMode(.v5)
             ]
-        )
+        ),
+        .testTarget(name: "DolmoPasteTests", dependencies: ["DolmoPaste"], path: "Tests/DolmoPasteTests")
     ]
 )

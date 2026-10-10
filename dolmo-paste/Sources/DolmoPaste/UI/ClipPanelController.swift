@@ -82,13 +82,15 @@ final class ClipPanelController {
             if hovering {
                 preview.scheduleShow(item, imagesDirectory: store.imagesDirectory)
             } else {
-                preview.scheduleAutoHide()
+                preview.endHover(item)
             }
         }
         viewModel.onLayoutChange = { [weak self] in self?.resize() }
 
         preview = ImagePreviewController(theme: initialTheme)
         preview.anchorWindow = panel
+        preview.onResignKey = { [weak self] in self?.panelDidResignKey() }
+        preview.onClosePreview = { [weak self] in self?.panel.makeKey() }
 
         NotificationCenter.default.addObserver(
             self,
@@ -221,6 +223,7 @@ final class ClipPanelController {
                 self.preview.takeKeyIfMouseInside()
                 return event
             }
+            guard event.window === self.panel || self.preview.owns(event) else { return event }
             if event.type == .flagsChanged {
                 // 只按 ⌘（不带 ⇧⌥⌃）才亮序号，避免 ⌘⇧ 之类的组合键闪一下
                 let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
@@ -229,7 +232,15 @@ final class ClipPanelController {
                 return event
             }
             if event.type == .keyDown {
-                return self.handle(event) ? nil : event
+                let fromPreview = self.preview.owns(event)
+                if fromPreview { self.panel.makeKey() }
+                if self.handle(event) { return nil }
+                // 换 key 不会改变现有事件的窗口归属。交 field editor 的输入法路径，不能 insertText 绕过中文组词。
+                if fromPreview, let editor = self.panel.firstResponder as? NSTextView {
+                    editor.interpretKeyEvents([event])
+                    return nil
+                }
+                return event
             }
             return self.preview.consume(event) ? nil : event
         }
@@ -268,10 +279,6 @@ final class ClipPanelController {
 
     private func handle(_ event: NSEvent) -> Bool {
         if isComposing() { return false }
-
-        // 预览抢了 key（鼠标停在它上面）时，按键必须先回到主面板：
-        // 否则敲字全丢，快捷键也走不到搜索框
-        if preview.isKey { preview.resignKey(); panel.makeKey() }
 
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let chars = event.charactersIgnoringModifiers ?? ""
@@ -318,6 +325,7 @@ final class ClipPanelController {
             // 预览被缩放钉住时，第一次 Esc 只收预览，别把整个面板关了
             if preview.isPinned {
                 preview.hide()
+                panel.makeKey()
                 return true
             }
             hide()
@@ -392,7 +400,7 @@ final class ClipPanelController {
         // 鼠标移到预览上时它会拿走 key，这不是"点到别处"，不能把面板收了
         guard !preview.isKey else { return }
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.isVisible, !self.preview.isKey else { return }
+            guard let self, self.isVisible, !self.panel.isKeyWindow, !self.preview.isKey else { return }
             self.hide()
         }
     }
