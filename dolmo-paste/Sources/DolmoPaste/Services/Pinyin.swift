@@ -20,7 +20,14 @@ enum Pinyin {
         if text.localizedCaseInsensitiveContains(query) { return true }
         guard let pinyin = pinyinIndex, !pinyin.isEmpty else { return false }
         if pinyin.contains(query) { return true }
+        // 索引是 "ni hao" 这种带空格的形式，用户输入 "nihao" 也要命中
+        if compact(of: pinyin).contains(query) { return true }
         return initials(of: pinyin).contains(query)
+    }
+
+    /// 去掉空格与非字母，用来匹配连续输入的拼音（"ni hao" -> "nihao"）
+    static func compact(of pinyin: String) -> String {
+        String(pinyin.unicodeScalars.filter { $0.value >= 97 && $0.value <= 122 }.map(Character.init))
     }
 
     /// 取每个拼音音节的首字母，例如 "dolmo paste" -> "dp"

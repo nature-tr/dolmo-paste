@@ -192,10 +192,7 @@ struct ClipPanelView: View {
     }
 
     private func delete(_ item: ClipItem) {
-        Task { @MainActor in
-            viewModel.storeRef.delete(item)
-            viewModel.selectFirst()
-        }
+        Task { @MainActor in viewModel.delete(item) }
     }
 }
 

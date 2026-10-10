@@ -6,6 +6,9 @@ import Vision
 @MainActor
 final class ClipStore: ObservableObject {
     @Published private(set) var items: [ClipItem] = []
+    /// 数据真正更新**之后**回调（objectWillChange 是"将要变更"，那时 items 还是旧值）。
+    /// 观察者要靠它拿到更新后的行数，不能靠 objectWillChange 的时序。
+    var onDidChange: (() -> Void)?
 
     private let container: ModelContainer
     private let context: ModelContext
@@ -43,9 +46,13 @@ final class ClipStore: ObservableObject {
     // MARK: - 查询
 
     func refresh() {
+        // items 是 private(set)，外部改不了它，但删除/清除/淘汰后必须显式通知：
+        // 否则清空历史、改小上限这类操作要等到下一次复制才刷新 UI
+        objectWillChange.send()
         var descriptor = FetchDescriptor<ClipItem>(sortBy: [SortDescriptor(\.copiedAt, order: .reverse)])
         descriptor.fetchLimit = settings.historyLimit + settings.imageLimit + 64
         items = (try? context.fetch(descriptor)) ?? []
+        onDidChange?()
     }
 
     // MARK: - 写入
@@ -214,7 +221,8 @@ final class ClipStore: ObservableObject {
         context.delete(item)
     }
 
-    private func prune() {
+    /// 按当前上限淘汰。改小限额时要显式调一次，否则旧数据一直留到下次复制才清
+    func prune() {
         let descriptor = FetchDescriptor<ClipItem>(sortBy: [SortDescriptor(\.copiedAt, order: .reverse)])
         guard let all = try? context.fetch(descriptor) else { return }
 

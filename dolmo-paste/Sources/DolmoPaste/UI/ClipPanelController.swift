@@ -86,6 +86,7 @@ final class ClipPanelController {
             }
         }
         viewModel.onLayoutChange = { [weak self] in self?.resize() }
+        viewModel.onRequestHidePreview = { [weak self] in self?.preview.hide() }
 
         preview = ImagePreviewController(theme: initialTheme)
         preview.anchorWindow = panel
@@ -370,8 +371,7 @@ final class ClipPanelController {
 
     private func deleteSelected() {
         guard let item = viewModel.selectedItem else { return }
-        store.delete(item)
-        viewModel.selectFirst()
+        viewModel.delete(item)
         resize()
     }
 

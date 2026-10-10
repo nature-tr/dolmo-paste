@@ -25,6 +25,22 @@ final class ClipPanelViewModel: ObservableObject {
         storeCancellable = store.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
+        // 行数变了（捕获/删除/后台淘汰/取消固定）要立刻重算面板高度并夹回选中索引。
+        // 必须用"变更之后"的回调：objectWillChange 触发时 items 还是旧值。
+        store.onDidChange = { [weak self] in
+            guard let self else { return }
+            self.clampSelection()
+            self.objectWillChange.send()
+            self.onLayoutChange?()
+        }
+    }
+
+    /// 把选中索引夹进当前列表范围
+    func clampSelection() {
+        let count = filtered.count
+        guard count > 0 else { selectedIndex = 0; return }
+        if selectedIndex >= count { selectedIndex = count - 1 }
+        if selectedIndex < 0 { selectedIndex = 0 }
     }
 
     var storeRef: ClipStore { store }
@@ -65,6 +81,19 @@ final class ClipPanelViewModel: ObservableObject {
 
     func selectFirst() { selectedIndex = 0 }
 
+    /// 删除一条并保留原来的位置（不跳回首行）。
+    /// 删除前必须先收掉贴边预览：预览还持有这条数据，item 被 delete 后读属性会残留甚至异常。
+    func delete(_ item: ClipItem) {
+        let index = selectedIndex
+        onRequestHidePreview?()
+        store.delete(item)
+        selectedIndex = index
+        clampSelection()
+    }
+
+    /// 删除前用它关掉贴边预览（由控制器注入，ViewModel 不直接依赖 UI）
+    var onRequestHidePreview: (() -> Void)?
+
     /// 由面板控制器注入，避免 ViewModel 反向依赖 UI 层
     var onPaste: ((ClipItem, Bool) -> Void)?
     var onRequestClose: (() -> Void)?
@@ -101,6 +130,8 @@ final class ClipPanelViewModel: ObservableObject {
         if !ocr.isEmpty, ocr.localizedCaseInsensitiveContains(q) { return true }
         if let pinyin = item.pinyinIndex, !pinyin.isEmpty {
             if pinyin.contains(q) { return true }
+            // 用户输入 "nihao"，索引是 "ni hao"，去空格后再比一次
+            if Pinyin.compact(of: pinyin).contains(q) { return true }
             if Pinyin.initials(of: pinyin).contains(q) { return true }
         }
         return false

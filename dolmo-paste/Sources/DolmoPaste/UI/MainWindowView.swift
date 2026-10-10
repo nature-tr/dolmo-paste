@@ -259,6 +259,12 @@ struct MainWindowView: View {
 
     // MARK: 历史与存储
 
+    /// 上限改动后立刻按新值淘汰并刷新列表
+    private func applyLimits() {
+        store.prune()
+        store.refresh()
+    }
+
     private var statsLine: String {
         var parts = ["\(stats.total) 条记录",
                      "占用 " + ByteCountFormatter.string(fromByteCount: stats.imageBytes, countStyle: .file)]
@@ -280,11 +286,14 @@ struct MainWindowView: View {
                 SettingRow(title: "文本上限", subtitle: "超出后淘汰最早的，固定项除外", theme: theme) {
                     ValueStepper(text: "\(settings.historyLimit) 条", theme: theme,
                                  value: $settings.historyLimit, range: 50...5000, step: 50)
+                        // 调小要立刻淘汰，否则旧数据要等到下次复制才被清理
+                        .onChange(of: settings.historyLimit) { _, _ in applyLimits() }
                 }
                 GroupDivider(theme: theme)
                 SettingRow(title: "图片上限", theme: theme) {
                     ValueStepper(text: "\(settings.imageLimit) 张", theme: theme,
                                  value: $settings.imageLimit, range: 20...2000, step: 20)
+                        .onChange(of: settings.imageLimit) { _, _ in applyLimits() }
                 }
                 GroupDivider(theme: theme)
                 SettingRow(title: "大图只留缩略图", subtitle: "超过这个体积不保存原图", theme: theme) {

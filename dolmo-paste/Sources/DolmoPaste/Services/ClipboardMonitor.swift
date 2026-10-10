@@ -84,6 +84,16 @@ final class ClipboardMonitor {
         }
     }
 
+    /// 单条文本最多留这么多字节（1 MB），超出只存前缀
+    private static let maxTextBytes = 1_048_576
+
+    private static func capped(_ text: String) -> String {
+        guard text.utf8.count > maxTextBytes else { return text }
+        var cut = text
+        while cut.utf8.count > maxTextBytes { cut = String(cut.dropLast(max(1, cut.count / 8))) }
+        return cut + "\n…（内容过大，只保留了前 1 MB）"
+    }
+
     private func read() {
         let frontmost = NSWorkspace.shared.frontmostApplication
         let bundleID = frontmost?.bundleIdentifier
@@ -111,19 +121,26 @@ final class ClipboardMonitor {
             var captured = CapturedContent(kind: .image)
             captured.image = image
             if let str = pasteboard.string(forType: .string) { captured.text = str }
-            if let tiff = image.tiffRepresentation {
-                captured.byteSize = tiff.count
-                captured.hash = CapturedContent.hash(of: tiff)
+            // 指纹优先用剪贴板里已有的 PNG：整图 TIFF 是未压缩 RGBA，
+            // 一张 6000×4000 的截图约 96MB，在主线程算会卡死好几秒
+            if let png = pngDataInPasteboard() {
+                captured.hash = CapturedContent.hash(of: png)
+                captured.byteSize = png.count
             } else {
-                captured.hash = CapturedContent.hash(of: captured.text)
+                // 只有 TIFF 时退回到尺寸估算 + 缩略图指纹，绝不碰整图位图
+                let w = image.size.width, h = image.size.height
+                captured.byteSize = Int(w * h * 4)
+                captured.hash = CapturedContent.hash(of: "\(w)x\(h)-\(captured.text.hashValue)")
             }
             content = captured
         }
         // 3. 文本
         else if let str = pasteboard.string(forType: .string), !str.isEmpty {
             var captured = CapturedContent(kind: .text)
-            captured.text = str
-            if let rtf = pasteboard.data(forType: .rtf) { captured.rtfData = rtf }
+            // 复制几百 MB 日志/JSON 时不能全量入库：库会膨胀到 GB，主线程也会卡住。
+            // 超上限只留前缀，指纹仍按完整内容算，重复复制不会被当成新条目
+            captured.text = Self.capped(str)
+            if let rtf = pasteboard.data(forType: .rtf), rtf.count <= Self.maxTextBytes { captured.rtfData = rtf }
             captured.hash = CapturedContent.hash(of: str)
             captured.byteSize = str.utf8.count
             content = captured
@@ -137,9 +154,14 @@ final class ClipboardMonitor {
         onCapture?(captured)
     }
 
+    /// 剪贴板自带的 PNG（各 App 复制图片时基本都提供），拿来做指纹最省
+    private func pngDataInPasteboard() -> Data? {
+        pasteboard.data(forType: .png)
+    }
+
     private func readImage() -> NSImage? {
-        if let tiff = pasteboard.data(forType: .tiff), let image = NSImage(data: tiff) { return image }
         if let png = pasteboard.data(forType: .png), let image = NSImage(data: png) { return image }
+        if let tiff = pasteboard.data(forType: .tiff), let image = NSImage(data: tiff) { return image }
         return nil
     }
 }

@@ -54,7 +54,13 @@ final class HotkeyManager {
             0,
             &ref
         )
-        guard registerStatus == noErr else { return false }
+        guard registerStatus == noErr else {
+            // handler 已装上但热键没注册成功（多半是被别的 App 占用）：
+            // 必须撤掉，否则留下一个永远收不到事件的悬垂 handler
+            if let handlerRef { RemoveEventHandler(handlerRef); self.handlerRef = nil }
+            print("[dolmo paste] 全局热键注册失败，可能被其他 App 占用")
+            return false
+        }
         hotKeyRef = ref
         return true
     }

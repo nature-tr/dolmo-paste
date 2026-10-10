@@ -44,7 +44,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { @MainActor in self.panelController.toggle() }
         }
         if !HotkeyManager.shared.register() {
-            print("[dolmo paste] 全局热键注册失败，快捷键可能被其他 App 占用")
+            // 不能只打日志：用户会以为应用没启动。明确告诉他热键被占用，还有菜单栏入口可用
+            Task { @MainActor in
+                Toast.shared.show("⌘⇧V 已被其他 App 占用，请点菜单栏图标打开（可在系统设置里改冲突的快捷键）", duration: 5)
+            }
         }
 
         setupStatusItem()
