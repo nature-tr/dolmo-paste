@@ -84,16 +84,6 @@ final class ClipboardMonitor {
         }
     }
 
-    /// 单条文本最多留这么多字节（1 MB），超出只存前缀
-    private static let maxTextBytes = 1_048_576
-
-    private static func capped(_ text: String) -> String {
-        guard text.utf8.count > maxTextBytes else { return text }
-        var cut = text
-        while cut.utf8.count > maxTextBytes { cut = String(cut.dropLast(max(1, cut.count / 8))) }
-        return cut + "\n…（内容过大，只保留了前 1 MB）"
-    }
-
     private func read() {
         let frontmost = NSWorkspace.shared.frontmostApplication
         let bundleID = frontmost?.bundleIdentifier
@@ -134,13 +124,32 @@ final class ClipboardMonitor {
             }
             content = captured
         }
-        // 3. 文本
+        // 3. 颜色值：设计工具复制的多是纯 hex，按文本存会看不出是什么颜色
+        else if let str = pasteboard.string(forType: .string), let hex = ContentHeuristics.normalizedHex(str) {
+            var captured = CapturedContent(kind: .color)
+            captured.text = hex
+            captured.hash = CapturedContent.hash(of: hex)
+            captured.byteSize = hex.utf8.count
+            content = captured
+        }
+        // 4. HTML：网页/邮件复制的内容，只存纯文本会丢掉链接和排版，转成 RTF 一起存。
+        //    解析不出文本就往下走，按普通文本处理，别把这次捕获丢掉
+        else if let html = pasteboard.data(forType: .html), !html.isEmpty,
+                let plain = ContentHeuristics.plainText(fromHTML: html), !plain.isEmpty {
+            var captured = CapturedContent(kind: .text)
+            captured.text = ContentHeuristics.capped(plain)
+            captured.rtfData = ContentHeuristics.rtf(fromHTML: html)
+            captured.hash = CapturedContent.hash(of: html)
+            captured.byteSize = html.count
+            content = captured
+        }
+        // 5. 文本
         else if let str = pasteboard.string(forType: .string), !str.isEmpty {
             var captured = CapturedContent(kind: .text)
             // 复制几百 MB 日志/JSON 时不能全量入库：库会膨胀到 GB，主线程也会卡住。
             // 超上限只留前缀，指纹仍按完整内容算，重复复制不会被当成新条目
-            captured.text = Self.capped(str)
-            if let rtf = pasteboard.data(forType: .rtf), rtf.count <= Self.maxTextBytes { captured.rtfData = rtf }
+            captured.text = ContentHeuristics.capped(str)
+            if let rtf = pasteboard.data(forType: .rtf), rtf.count <= ContentHeuristics.maxTextBytes { captured.rtfData = rtf }
             captured.hash = CapturedContent.hash(of: str)
             captured.byteSize = str.utf8.count
             content = captured

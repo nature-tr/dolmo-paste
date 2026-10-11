@@ -12,7 +12,9 @@ struct ClipPanelView: View {
             header
             hairline
 
-            if viewModel.filtered.isEmpty {
+            if viewModel.isSnippetMode {
+                if viewModel.snippetResults.isEmpty { emptyState } else { snippetList }
+            } else if viewModel.filtered.isEmpty {
                 emptyState
             } else {
                 list
@@ -39,11 +41,11 @@ struct ClipPanelView: View {
             searchFocused = true
         }
         .onChange(of: viewModel.query) { _, _ in
-            viewModel.selectedIndex = 0
+            viewModel.selectFirst()
             viewModel.onLayoutChange?()
         }
         .onChange(of: viewModel.filter) { _, _ in
-            viewModel.selectedIndex = 0
+            viewModel.selectFirst()
             viewModel.onLayoutChange?()
         }
         .onAppear { searchFocused = true }
@@ -63,7 +65,7 @@ struct ClipPanelView: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(theme.tertiaryText)
-            TextField("搜索剪贴板历史", text: $viewModel.query)
+            TextField(viewModel.isSnippetMode ? "搜索片段" : "搜索剪贴板历史", text: $viewModel.query)
                 .textFieldStyle(.plain)
                 .font(theme.searchFont)
                 .foregroundStyle(theme.primaryText)
@@ -86,7 +88,7 @@ struct ClipPanelView: View {
                         .contentShape(Rectangle())
                         .onTapGesture {
                             viewModel.filter = option
-                            viewModel.selectedIndex = 0
+                            viewModel.selectFirst()
                         }
                 }
             }
@@ -117,10 +119,12 @@ struct ClipPanelView: View {
                         ClipRow(
                             item: item,
                             selected: index == viewModel.selectedIndex,
+                            checked: viewModel.isChecked(item),
                             quickNumber: showsNumbers && index < 9 ? index + 1 : nil,
                             showsNumberSlot: showsNumbers,
                             highlight: viewModel.query.trimmingCharacters(in: .whitespacesAndNewlines),
-                            theme: theme
+                            theme: theme,
+                            thumbnail: item.kind == .image ? viewModel.storeRef.thumbnailData(for: item) : nil
                         )
                         .id(item.id)
                         .padding(.horizontal, theme.listInset)
@@ -136,7 +140,11 @@ struct ClipPanelView: View {
                         .contentShape(Rectangle())
                         // simultaneousGesture：onTapGesture 会被同视图上的 contextMenu 吞掉
                         .simultaneousGesture(TapGesture().onEnded {
-                            viewModel.paste(index: index)
+                            if viewModel.checkedIDs.count > 1 {
+                                viewModel.pasteSelection()
+                            } else {
+                                viewModel.paste(index: index)
+                            }
                         })
                         .onHover { hovering in
                             guard item.kind == .image else { return }
@@ -146,6 +154,9 @@ struct ClipPanelView: View {
                         .contextMenu {
                             Button(item.isPinned ? "取消固定" : "固定") { togglePin(item) }
                             Button("复制纯文本") { viewModel.paste(index: index, plainTextOnly: true) }
+                            Button(viewModel.isChecked(item) ? "取消勾选" : "勾选（合并粘贴）") {
+                                viewModel.toggleCheckAt(index: index)
+                            }
                             if item.kind == .image {
                                 Divider()
                                 Button("查看大图") { viewModel.onOpenImageViewer?(item) }
@@ -153,6 +164,12 @@ struct ClipPanelView: View {
                             Divider()
                             Button("删除") { delete(item) }
                         }
+                    }
+                    // 滚到底再取下一页：先只加载 200 条，避免上限调大后一次拉几千条
+                    if viewModel.storeRef.hasMore {
+                        Color.clear
+                            .frame(height: 1)
+                            .onAppear { viewModel.storeRef.loadMore() }
                     }
                 }
                 .padding(.vertical, theme.listVerticalPadding)
@@ -166,21 +183,79 @@ struct ClipPanelView: View {
         }
     }
 
+    // MARK: - 片段列表
+    // 和历史列表共用行高、缩进和选中底色，只在内容上区分：前导是"片段"标记，第二行是触发词
+
+    private var snippetList: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.vertical, showsIndicators: false) {
+                LazyVStack(spacing: 0) {
+                    let list = viewModel.snippetResults
+                    ForEach(Array(list.enumerated()), id: \.element.id) { index, snippet in
+                        SnippetRow(
+                            title: snippet.displayTitle,
+                            detail: snippet.panelDetail,
+                            selected: index == viewModel.snippetIndex,
+                            theme: theme
+                        )
+                        .id(snippet.id)
+                        .padding(.horizontal, theme.listInset)
+                        .contentShape(Rectangle())
+                        .simultaneousGesture(TapGesture().onEnded {
+                            viewModel.pasteSnippet(at: index)
+                        })
+                        .contextMenu {
+                            Button("在设置里管理片段") { viewModel.onOpenSnippetSettings?() }
+                        }
+                    }
+                }
+                .padding(.vertical, theme.listVerticalPadding)
+            }
+            .onChange(of: viewModel.snippetIndex) { _, newValue in
+                guard viewModel.snippetResults.indices.contains(newValue) else { return }
+                withAnimation(.easeOut(duration: 0.08)) {
+                    proxy.scrollTo(viewModel.snippetResults[newValue].id, anchor: .center)
+                }
+            }
+        }
+    }
+
     private var emptyState: some View {
-        Text(viewModel.query.isEmpty ? "还没有记录，去复制点什么" : "没有匹配的内容")
-            .font(.system(size: 13))
-            .foregroundStyle(theme.secondaryText)
-            .frame(maxWidth: .infinity)
-            .frame(height: 150)
+        Group {
+            if viewModel.isSnippetMode {
+                VStack(spacing: 6) {
+                    Text(viewModel.query.isEmpty ? "还没有片段" : "没有匹配的片段")
+                        .font(.system(size: 13))
+                    Text("在设置 → 片段里添加")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(theme.tertiaryText)
+                }
+                .foregroundStyle(theme.secondaryText)
+                .frame(maxWidth: .infinity)
+                .frame(height: 150)
+            } else {
+                Text(viewModel.query.isEmpty ? "还没有记录，去复制点什么" : "没有匹配的内容")
+                    .font(.system(size: 13))
+                    .foregroundStyle(theme.secondaryText)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 150)
+            }
+        }
     }
 
     // MARK: - 底部：只留三个最常用的操作，其余在右键菜单和设置页
 
     private var footer: some View {
         HStack(spacing: 16) {
-            FooterHint(key: "⏎", text: "粘贴", theme: theme)
-            FooterHint(key: "⇧⏎", text: "纯文本", theme: theme)
-            FooterHint(key: "⌘P", text: "固定", theme: theme)
+            if viewModel.isSnippetMode {
+                FooterHint(key: "⏎", text: "粘贴片段", theme: theme)
+                FooterHint(key: "⇥", text: "回历史", theme: theme)
+            } else {
+                FooterHint(key: "⏎", text: viewModel.checkedIDs.count > 1 ? "合并粘贴" : "粘贴", theme: theme)
+                FooterHint(key: "⇧⏎", text: "纯文本", theme: theme)
+                FooterHint(key: "⌘M", text: "勾选", theme: theme)
+                FooterHint(key: "⌘P", text: "固定", theme: theme)
+            }
             Spacer(minLength: 0)
         }
         .padding(.horizontal, theme.listInset + 12)
@@ -217,17 +292,32 @@ private struct FooterHint: View {
 private struct ClipRow: View {
     let item: ClipItem
     let selected: Bool
+    /// 被 ⌘M 勾选了，回车会合并粘贴
+    var checked: Bool = false
     let quickNumber: Int?
     /// 按住 ⌘ 时所有行都留出序号列，保证时间列不跳
     let showsNumberSlot: Bool
     /// 搜索词：标题里命中的部分加粗（dolmo 再染橙）
     var highlight: String = ""
     let theme: PanelTheme
+    /// 由外部按需提供缩略图（惰性加载），nil 时走占位
+    var thumbnail: Data?
 
     var body: some View {
         HStack(spacing: 11) {
-            leading
-                .frame(width: theme.leadingSize, height: theme.leadingSize)
+            ZStack {
+                leading
+                    .frame(width: theme.leadingSize, height: theme.leadingSize)
+                // 勾选标记：叠在图标右下角，不占额外宽度，时间列不会跳
+                if checked {
+                    Circle()
+                        .fill(theme.accent)
+                        .overlay(Circle().strokeBorder(theme.background, lineWidth: 1.5))
+                        .frame(width: 9, height: 9)
+                        .offset(x: theme.leadingSize / 2 - 1, y: theme.leadingSize / 2 - 1)
+                }
+            }
+            .frame(width: theme.leadingSize, height: theme.leadingSize)
 
             if theme.twoLineRows {
                 VStack(alignment: .leading, spacing: 3) {
@@ -359,7 +449,8 @@ private struct ClipRow: View {
     private var leading: some View {
         switch item.kind {
         case .image:
-            if let thumbnail = item.thumbnailData, let image = NSImage(data: thumbnail) {
+            // 惰性读：缩略图 blob 不跟着条目常驻，滚到这一行才取
+            if let thumbnail = thumbnail, let image = NSImage(data: thumbnail) {
                 Image(nsImage: image)
                     .resizable()
                     .scaledToFill()

@@ -56,6 +56,20 @@ enum SnapshotRunner {
                         to: outputDirectory.appendingPathComponent("search_\(suffix).png")
                     )
 
+                    // 片段：⇥ 切到「片段」那一栏
+                    let snippetModel = ClipPanelViewModel(store: store)
+                    snippetModel.filter = .snippet
+                    let snippetHeight = theme.panelHeight(rowCount: snippetModel.rowCount)
+                    render(
+                        Backdrop(appearance: appearanceName) {
+                            ClipPanelView(viewModel: snippetModel, theme: theme)
+                                .frame(width: theme.panelWidth, height: snippetHeight)
+                        },
+                        size: CGSize(width: theme.panelWidth + 120, height: snippetHeight + 120),
+                        appearance: appearance,
+                        to: outputDirectory.appendingPathComponent("snippet_\(suffix).png")
+                    )
+
                     // 悬停预览（贴在浮窗旁边的小面板）
                     if let imageItem = store.items.first(where: { $0.kind == .image }) {
                         let model = PreviewPanelModel()
@@ -92,7 +106,12 @@ enum SnapshotRunner {
                     for section in SettingsSection.allCases {
                         // 真实窗口里 MainWindowView 是填满窗口的，这里套一层固定尺寸，
                         // 尺寸和窗口一致（windowSize.height 是内容高度，截图不含标题栏那 32pt）
-                        let window = MainWindowView(store: store, initialSection: section, styleOverride: style)
+                        // 片段页额外渲染一版"选中一条"的状态：编辑区只有选中后才有内容
+                        let presetSnippet = section == .snippets
+                            ? store.snippetStore.snippets.first { !$0.keyword.isEmpty }?.id
+                            : nil
+                        let window = MainWindowView(store: store, initialSection: section,
+                                                    styleOverride: style, initialSnippetID: presetSnippet)
                             .frame(width: MainWindowView.windowSize.width,
                                    height: MainWindowView.windowSize.height)
                             // 红绿灯实测占窗口顶部 9~23pt，截图里按真实位置摆
@@ -284,6 +303,13 @@ private enum SampleData {
         text("下周二 14:00 在 3 楼会议室过一下 Q4 规划，记得带上数据看板的截图",
              app: "微信", bundle: "com.tencent.xinWeChat", minutes: 9)
         text("git rebase -i HEAD~3", app: "终端", bundle: "com.apple.Terminal", minutes: 2)
+
+        // 片段：浮窗 ⇥ 切到「片段」和设置页的片段分区都靠它
+        let snippets = store.snippetStore!
+        snippets.add(title: "公司地址", content: "上海市徐汇区漕溪北路 88 号 圣爱大厦 12F", keyword: "addr")
+        snippets.add(title: "日报签名", content: "——\ndolmo · {{date}}", keyword: "sig")
+        snippets.add(title: "会议纪要开头", content: "时间：{{date}} {{time}}\n参会：\n议题：", keyword: "meeting")
+        snippets.add(title: "工作邮箱", content: "chengtianran@dolmo.top", keyword: "mail")
     }
 }
 

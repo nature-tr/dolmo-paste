@@ -63,6 +63,55 @@ enum PasteEngine {
         }
     }
 
+    /// 把多条历史拼成一段写回剪贴板（合并粘贴）。
+    /// 图片/文件没法拼，写它们的文件名或占位；至少不会让你看着空剪贴板发懵。
+    @discardableResult
+    static func writeMergedToPasteboard(_ items: [ClipItem], imagesDirectory: URL, separator: String = "\n") -> Bool {
+        guard !items.isEmpty else { return false }
+        if items.count == 1 {
+            return writeToPasteboard(items[0], plainTextOnly: false, imagesDirectory: imagesDirectory)
+        }
+
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+
+        var parts: [String] = []
+        var image: NSImage?
+        for item in items {
+            switch item.kind {
+            case .image:
+                if image == nil {
+                    if let name = item.imageFileName {
+                        image = NSImage(contentsOf: imagesDirectory.appendingPathComponent(name))
+                    }
+                    if image == nil, let thumbnail = item.thumbnailData { image = NSImage(data: thumbnail) }
+                }
+                parts.append(item.textContent.isEmpty ? "[图片 \(item.imageWidth)×\(item.imageHeight)]" : item.textContent)
+            case .file:
+                parts.append(item.fileNames.isEmpty ? item.textContent : item.fileNames.joined(separator: ", "))
+            default:
+                parts.append(item.textContent)
+            }
+        }
+
+        let merged = parts.filter { !$0.isEmpty }.joined(separator: separator)
+        guard !merged.isEmpty else {
+            if let image { pasteboard.writeObjects([image]); return true }
+            return false
+        }
+        pasteboard.setString(merged, forType: .string)
+        // 拼好的内容里还夹着图片的话，附在后面，目标 App 会按自己的规则选一个用
+        if let image { pasteboard.writeObjects([image]) }
+        return true
+    }
+
+    /// 片段用：展开后的文本直接写回剪贴板
+    static func writeStringToPasteboard(_ text: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+    }
+
     /// 模拟 ⌘V。必须在面板已关闭、原 App 重新拿到焦点之后调用。
     static func postCommandV() {
         let source = CGEventSource(stateID: .combinedSessionState)

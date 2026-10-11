@@ -15,6 +15,8 @@ final class ClipStore: ObservableObject {
     private let settings = AppSettings.shared
 
     let imagesDirectory: URL
+    /// 片段库（常用片段，不参与淘汰）
+    private(set) var snippetStore: SnippetStore!
     private static let thumbnailMaxEdge: CGFloat = 400
 
     /// - Parameter inMemory: 截图评审模式用，数据只在内存，不碰用户真实历史
@@ -30,10 +32,12 @@ final class ClipStore: ObservableObject {
             configuration = ModelConfiguration(url: support.appendingPathComponent("dolmo-paste.store"))
         }
         try FileManager.default.createDirectory(at: imagesDirectory, withIntermediateDirectories: true)
-        container = try ModelContainer(for: ClipItem.self, configurations: configuration)
+        // 片段和历史共用同一个库文件，但独立的表，不参与淘汰
+        container = try ModelContainer(for: ClipItem.self, Snippet.self, configurations: configuration)
         context = ModelContext(container)
         context.autosaveEnabled = true
         refresh()
+        snippetStore = SnippetStore(context: context)
     }
 
     private static func applicationSupportDirectory() throws -> URL {
@@ -45,14 +49,60 @@ final class ClipStore: ObservableObject {
 
     // MARK: - 查询
 
+    // MARK: - 查询
+
+    /// 首屏只取这么多条。上限能设到 5000，一次性全量 fetch 每条还带缩略图 blob，
+    /// 常驻内存会是几百 MB，唤起面板明显卡。改成先取 200，滚到底再追加
+    private static let pageSize = 200
+    private var loadedCount = 0
+    /// 上一次 fetch 取到的比 limit 少，说明已经到底了
+    private var reachedEnd = false
+
+    /// 还有没有没加载的（列表滚到底时用它决定要不要继续取）
+    var hasMore: Bool {
+        guard !reachedEnd else { return false }
+        return loadedCount < settings.historyLimit + settings.imageLimit
+    }
+
     func refresh() {
         // items 是 private(set)，外部改不了它，但删除/清除/淘汰后必须显式通知：
         // 否则清空历史、改小上限这类操作要等到下一次复制才刷新 UI
         objectWillChange.send()
-        var descriptor = FetchDescriptor<ClipItem>(sortBy: [SortDescriptor(\.copiedAt, order: .reverse)])
-        descriptor.fetchLimit = settings.historyLimit + settings.imageLimit + 64
-        items = (try? context.fetch(descriptor)) ?? []
+        loadedCount = min(max(settings.historyLimit + settings.imageLimit, Self.pageSize), Self.pageSize)
+        items = fetch(limit: loadedCount)
+        reachedEnd = items.count < loadedCount
+        thumbnailCache.removeAll()
         onDidChange?()
+    }
+
+    /// 滚到底加载下一页
+    func loadMore() {
+        guard hasMore else { return }
+        objectWillChange.send()
+        loadedCount += Self.pageSize
+        items = fetch(limit: loadedCount)
+        reachedEnd = items.count < loadedCount
+        onDidChange?()
+    }
+
+    private func fetch(limit: Int) -> [ClipItem] {
+        var descriptor = FetchDescriptor<ClipItem>(sortBy: [SortDescriptor(\.copiedAt, order: .reverse)])
+        descriptor.fetchLimit = limit
+        return (try? context.fetch(descriptor)) ?? []
+    }
+
+    // MARK: - 缩略图：按需读，不跟着条目一起常驻
+
+    private var thumbnailCache: [String: Data] = [:]
+
+    /// 列表滚到哪读到哪。缩略图 blob 全部常驻是内存大头，改成按文件名惰性取
+    func thumbnailData(for item: ClipItem) -> Data? {
+        guard let name = item.imageFileName else { return item.thumbnailData }
+        if let cached = thumbnailCache[name] { return cached }
+        let url = imagesDirectory.appendingPathComponent(name)
+        let data = try? Data(contentsOf: url)
+        if let data { thumbnailCache[name] = data }
+        return data ?? item.thumbnailData
     }
 
     // MARK: - 写入

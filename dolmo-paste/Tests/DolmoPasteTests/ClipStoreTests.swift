@@ -141,6 +141,100 @@ final class ClipStoreTests: XCTestCase {
         XCTAssertEqual(pasteboard.string(forType: .string), "dolmo-测试.txt")
     }
 
+    func testColorCaptureNormalizesHex() {
+        XCTAssertEqual(ContentHeuristics.normalizedHex("#ff9500"), "#FF9500")
+        XCTAssertEqual(ContentHeuristics.normalizedHex("  #f90  "), "#FF9900")
+        XCTAssertEqual(ContentHeuristics.normalizedHex("#FF9500CC"), "#FF9500")
+        XCTAssertNil(ContentHeuristics.normalizedHex("主题色是 #FF9500 才对"), "正文里带 # 不能判成颜色")
+        XCTAssertNil(ContentHeuristics.normalizedHex("#12345"))
+        XCTAssertNil(ContentHeuristics.normalizedHex("FF9500"))
+    }
+
+    func testHTMLCaptureKeepsTextAndFormatting() {
+        let html = "<html><body><p>你好 <b>世界</b></p></body></html>"
+        guard let data = html.data(using: .utf8) else { return XCTFail("编码失败") }
+        let plain = ContentHeuristics.plainText(fromHTML: data)
+        XCTAssertNotNil(plain)
+        XCTAssertTrue(plain?.contains("你好") == true)
+        XCTAssertTrue(plain?.contains("世界") == true)
+        XCTAssertNotNil(ContentHeuristics.rtf(fromHTML: data), "HTML 要转成 RTF，粘贴时才能还原排版")
+    }
+
+    @MainActor func testMergedPasteJoinsInVisibleOrder() {
+        let pasteboard = NSPasteboard.general
+        defer { pasteboard.clearContents() }
+        let store = try? makeStore()
+        guard let store else { return XCTFail("建库失败") }
+        withLimits(history: 50, image: 10) {
+            add(store, "第一段")
+            add(store, "第二段")
+            add(store, "第三段")
+
+            let viewModel = ClipPanelViewModel(store: store)
+            var merged: [ClipItem] = []
+            viewModel.onPasteMerged = { merged = $0 }
+
+            // 列表是倒序的（新的在前），勾选顺序必须跟列表一致，不能是插入顺序
+            let list = viewModel.filtered
+            viewModel.toggleCheck(list[0])
+            viewModel.toggleCheck(list[2])
+            XCTAssertEqual(viewModel.checkedItems.count, 2)
+            XCTAssertEqual(viewModel.checkedItems.map(\.textContent), [list[0].textContent, list[2].textContent])
+
+            viewModel.pasteSelection()
+            XCTAssertEqual(merged.count, 2)
+
+            let ok = PasteEngine.writeMergedToPasteboard(viewModel.checkedItems,
+                                                          imagesDirectory: store.imagesDirectory)
+            XCTAssertTrue(ok)
+            let text = pasteboard.string(forType: .string) ?? ""
+            XCTAssertTrue(text.contains("第一段"))
+            XCTAssertTrue(text.contains("第三段"))
+            XCTAssertEqual(text.components(separatedBy: "\n").count, 2)
+
+            viewModel.clearChecked()
+            XCTAssertTrue(viewModel.checkedItems.isEmpty)
+        }
+    }
+
+    /// 首屏不能一次拉满上限（上限可设 5000），滚到底再追加
+    @MainActor func testRefreshLoadsFirstPageOnlyAndLoadMoreGrows() {
+        let store = try? makeStore()
+        guard let store else { return XCTFail("建库失败") }
+        withLimits(history: 2000, image: 200) {
+            for i in 0..<260 { add(store, "条目 \(i)") }
+            store.refresh()
+            XCTAssertEqual(store.items.count, 200, "首屏只取 200 条")
+            XCTAssertTrue(store.hasMore)
+            store.loadMore()
+            XCTAssertEqual(store.items.count, 260)
+            XCTAssertFalse(store.hasMore, "取到底之后不应再继续")
+            store.loadMore()
+            XCTAssertEqual(store.items.count, 260, "到底后再调也不能重复追加")
+        }
+    }
+
+    @MainActor func testThumbnailIsLoadedLazilyAndCached() throws {
+        let store = try makeStore()
+        withLimits(history: 50, image: 10) {
+            var content = CapturedContent(kind: .image)
+            // 必须真的有 bitmap，否则 pngData 取不到，条目既没落盘原图也没缩略图
+            let image = NSImage(size: NSSize(width: 20, height: 10))
+            image.lockFocus()
+            NSColor.orange.setFill()
+            NSRect(x: 0, y: 0, width: 20, height: 10).fill()
+            image.unlockFocus()
+            content.image = image
+            content.hash = "thumb-\(UUID().uuidString)"
+            store.add(content)
+            guard let item = store.items.first(where: { $0.kind == .image }) else {
+                return XCTFail("图片条目没落库")
+            }
+            // 没落盘原图（缩略图场景）时至少要有内存里的缩略图可用
+            XCTAssertNotNil(store.thumbnailData(for: item))
+        }
+    }
+
     func testHugeTextIsCappedBeforeStoring() {
         // 复制几百 MB 日志时不能全量入库：这里直接验证截断函数的收敛行为
         let huge = String(repeating: "abcdefghij", count: 200_000)

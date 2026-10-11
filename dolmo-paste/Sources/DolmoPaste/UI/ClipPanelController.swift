@@ -40,7 +40,8 @@ final class ClipPanelController {
     private var eventMonitor: Any?
     private var previousApp: NSRunningApplication?
 
-    var onOpenSettings: (() -> Void)?
+    /// 打开设置，并直接落到指定分区（片段行上右键会跳到「片段」）
+    var onOpenSettings: ((SettingsSection) -> Void)?
     /// 打开大图查看器。带出 previousApp，查看器关掉后焦点还回原 App
     var onOpenImageViewer: ((ClipItem, NSRunningApplication?) -> Void)?
 
@@ -74,6 +75,17 @@ final class ClipPanelController {
 
         viewModel.onPaste = { [weak self] item, plain in
             self?.pasteItem(item, plainTextOnly: plain)
+        }
+        viewModel.onPasteMerged = { [weak self] items in
+            self?.pasteMerged(items)
+        }
+        viewModel.onPasteSnippet = { [weak self] snippet in
+            self?.pasteSnippet(snippet)
+        }
+        viewModel.onOpenSnippetSettings = { [weak self] in
+            guard let self else { return }
+            self.hide(returnFocus: false)
+            self.onOpenSettings?(.snippets)
         }
         viewModel.onRequestClose = { [weak self] in self?.hide() }
         viewModel.onOpenImageViewer = { [weak self] item in self?.openImageViewer(for: item) }
@@ -160,7 +172,7 @@ final class ClipPanelController {
 
     private func resize() {
         let currentTheme = theme
-        let height = currentTheme.panelHeight(rowCount: viewModel.filtered.count)
+        let height = currentTheme.panelHeight(rowCount: viewModel.rowCount)
         panel.setContentSize(NSSize(width: currentTheme.panelWidth, height: height))
         hosting.frame = NSRect(x: 0, y: 0, width: currentTheme.panelWidth, height: height)
         preview.reposition()
@@ -290,16 +302,27 @@ final class ClipPanelController {
                 return true
             }
             switch chars.lowercased() {
+            case "m":
+                // ⌘M 勾选当前行（再按一次取消）并下移，⌘⇧M 清空勾选。
+                // 勾了多条后回车 = 合并粘贴，一次粘出
+                if viewModel.isSnippetMode { return false }
+                if flags.contains(.shift) {
+                    viewModel.clearChecked()
+                } else {
+                    viewModel.toggleCheckAtSelection()
+                }
+                return true
             case "a", "x", "c", "v", "z":
                 // 编辑命令直接转给搜索框的 field editor：
                 // 面板是 nonactivating 的，AppKit 不会自动派发这类 ⌘ 命令
                 return performEditingCommand(chars.lowercased().first ?? " ")
             case "p":
+                guard !viewModel.isSnippetMode else { return false }
                 if let item = viewModel.selectedItem { store.togglePin(item) }
                 return true
             case ",":
                 hide(returnFocus: false)
-                onOpenSettings?()
+                onOpenSettings?(.general)
                 return true
             case "w":
                 hide()
@@ -320,7 +343,8 @@ final class ClipPanelController {
 
         switch Int(event.keyCode) {
         case kVK_Return:
-            viewModel.paste(index: viewModel.selectedIndex, plainTextOnly: flags.contains(.shift))
+            // 有勾选就合并粘贴，否则粘当前行
+            viewModel.pasteSelection(plainTextOnly: flags.contains(.shift))
             return true
         case kVK_Escape:
             // 预览被缩放钉住时，第一次 Esc 只收预览，别把整个面板关了
@@ -343,9 +367,12 @@ final class ClipPanelController {
             return true
         case kVK_RightArrow:
             // 空格不能用来开查看器——搜索框有焦点时空格要拿来输入
+            guard !viewModel.isSnippetMode else { return false }
             if let item = viewModel.selectedItem { openImageViewer(for: item) }
             return true
         case kVK_Delete, kVK_ForwardDelete:
+            // 片段不从浮窗删：误删代价太大，要删去设置页
+            guard !viewModel.isSnippetMode else { return false }
             // 搜索框非空时必须放行给输入框正常退格，只有空时退格才是"删除记录"
             if viewModel.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 deleteSelected()
@@ -373,6 +400,47 @@ final class ClipPanelController {
         guard let item = viewModel.selectedItem else { return }
         viewModel.delete(item)
         resize()
+    }
+
+    /// 合并粘贴：把勾选项拼成一段一次粘出
+    private func pasteMerged(_ items: [ClipItem]) {
+        hide()
+        let ok = PasteEngine.writeMergedToPasteboard(items, imagesDirectory: store.imagesDirectory)
+        monitor.skipChangesUpToNow()
+        guard ok else {
+            Toast.shared.show("这些内容没有可粘贴的文字", duration: 2.4)
+            return
+        }
+        guard AppSettings.shared.autoPaste else { return }
+        guard PasteEngine.isTrusted() else {
+            Toast.shared.show("已合并复制到剪贴板，按 ⌘V 粘贴（未授权辅助功能，无法直接粘贴）", duration: 3.2)
+            return
+        }
+        let delay = max(AppSettings.shared.pasteDelayMs, 20)
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(delay)) {
+            PasteEngine.postCommandV()
+        }
+    }
+
+    /// 片段：展开变量后写回剪贴板，再模拟 ⌘V。
+    /// {{clipboard}} 要在写之前读——写完系统剪贴板就只剩片段内容了
+    private func pasteSnippet(_ snippet: Snippet) {
+        let clipboard = NSPasteboard.general.string(forType: .string)
+        hide()
+        let text = SnippetExpander.expand(snippet.content, clipboard: clipboard)
+        PasteEngine.writeStringToPasteboard(text)
+        store.snippetStore?.markUsed(snippet)
+        monitor.skipChangesUpToNow()
+
+        guard AppSettings.shared.autoPaste else { return }
+        guard PasteEngine.isTrusted() else {
+            Toast.shared.show("已复制到剪贴板，按 ⌘V 粘贴（未授权辅助功能，无法直接粘贴）", duration: 3.2)
+            return
+        }
+        let delay = max(AppSettings.shared.pasteDelayMs, 20)
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(delay)) {
+            PasteEngine.postCommandV()
+        }
     }
 
     /// 供大图查看器的「粘贴」复用：写完剪贴板再模拟 ⌘V

@@ -34,7 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         monitor.start()
 
         panelController = ClipPanelController(store: store, monitor: monitor)
-        panelController.onOpenSettings = { [weak self] in self?.openMainWindow() }
+        panelController.onOpenSettings = { [weak self] section in self?.openMainWindow(section: section) }
         panelController.onOpenImageViewer = { [weak self] item, app in
             self?.showImageViewer(for: item, previousApp: app)
         }
@@ -160,7 +160,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - 主窗口
 
     /// --settings 调试入口也要用，所以不是 private
-    @objc func openMainWindow() {
+    @objc func openMainWindow() { openMainWindow(section: .general) }
+
+    /// 打开并落到指定分区。窗口已经开着时重挂 rootView 换页——
+    /// 从片段行右键跳过来，用户要看的就是那一页
+    func openMainWindow(section: SettingsSection) {
         if mainWindow == nil {
             // 必须和 MainWindowView.windowSize 一致：
             // 窗口比内容大时 SwiftUI 会把内容居中，顶部就多出一圈空白
@@ -175,7 +179,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             window.titleVisibility = .hidden
             // 背景交给 SwiftUI 画，切换外观样式时才会跟着变
             window.backgroundColor = .clear
-            window.contentView = NSHostingView(rootView: MainWindowView(store: store))
+            window.contentView = NSHostingView(rootView: MainWindowView(store: store, initialSection: section))
             window.center()
             window.isReleasedWhenClosed = false
             // 窗口可能停在另一个桌面，激活时把它带到当前桌面
@@ -187,6 +191,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 object: window
             )
             mainWindow = window
+        } else if let window = mainWindow {
+            window.contentView = NSHostingView(rootView: MainWindowView(store: store, initialSection: section))
         }
 
         // 把主窗口提到最前，有三道坎，缺一个就会"点了没反应/只是出现但还在下面"：

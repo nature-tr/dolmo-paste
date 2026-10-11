@@ -5,6 +5,7 @@ import SwiftUI
 enum SettingsSection: String, CaseIterable, Identifiable {
     case general
     case history
+    case snippets
     case privacy
     case about
 
@@ -14,6 +15,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         switch self {
         case .general: return "通用"
         case .history: return "历史与存储"
+        case .snippets: return "片段"
         case .privacy: return "隐私"
         case .about: return "关于"
         }
@@ -23,6 +25,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         switch self {
         case .general: return "gearshape"
         case .history: return "clock.arrow.circlepath"
+        case .snippets: return "doc.text"
         case .privacy: return "hand.raised"
         case .about: return "info.circle"
         }
@@ -36,6 +39,8 @@ struct MainWindowView: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var account = UserAccount.shared
     @ObservedObject var store: ClipStore
+    /// 片段库是独立的 ObservableObject，必须单独观察，否则增删改不刷新
+    @ObservedObject private var snippetStore: SnippetStore
 
     @State private var selection: SettingsSection
     @State private var trusted = false
@@ -44,13 +49,30 @@ struct MainWindowView: View {
     @State private var showClearConfirm = false
     @State private var stats = ClipStore.StorageStats()
 
+    /// 片段编辑：先选一条再改下面的三栏，改动直接落库
+    @State private var selectedSnippetID: UUID?
+    @State private var draftTitle = ""
+    @State private var draftKeyword = ""
+    @State private var draftContent = ""
+
     /// 截图评审时强制指定样式，不去改用户的真实设置
     private let styleOverride: PanelStyleKind?
 
-    init(store: ClipStore, initialSection: SettingsSection = .general, styleOverride: PanelStyleKind? = nil) {
+    init(store: ClipStore, initialSection: SettingsSection = .general,
+         styleOverride: PanelStyleKind? = nil, initialSnippetID: UUID? = nil) {
         self.store = store
         self.styleOverride = styleOverride
+        // ClipStore 建库时就初始化好了片段库，这里一定拿得到
+        _snippetStore = ObservedObject(initialValue: store.snippetStore)
         _selection = State(initialValue: initialSection)
+        // 片段编辑区只有选中后才有内容，截图评审需要直接看到它长什么样
+        let preset = initialSnippetID.flatMap { id in
+            store.snippetStore.snippets.first { $0.id == id }
+        }
+        _selectedSnippetID = State(initialValue: preset?.id)
+        _draftTitle = State(initialValue: preset?.title ?? "")
+        _draftKeyword = State(initialValue: preset?.keyword ?? "")
+        _draftContent = State(initialValue: preset?.content ?? "")
     }
 
     /// 4 个页面用不着大窗口：收到 780×560，侧栏 180
@@ -161,6 +183,7 @@ struct MainWindowView: View {
                 switch selection {
                 case .general: generalSection
                 case .history: historySection
+                case .snippets: snippetsSection
                 case .privacy: privacySection
                 case .about: aboutSection
                 }
@@ -374,6 +397,140 @@ struct MainWindowView: View {
     /// 大图阈值用几个整档位，步进器调 10.5 MB 这种数没有意义
     /// 存的是二进制 MB（默认 10 × 1024²），档位也按 1024² 算，否则选中项对不上
     private static let imageSizeOptions = [5, 10, 20, 50].map { $0 * 1_048_576 }
+
+    // MARK: 片段
+
+    private var snippetsSection: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            Text("总要粘的东西放在这里：邮箱、签名、常用回复。浮窗里 ⇥ 切到「片段」，打字即搜，回车就粘。")
+                .font(.system(size: 13))
+                .foregroundStyle(theme.secondaryText)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, -10)
+
+            SettingsGroup(theme: theme, title: "片段", footnote: snippetVariablesNote) {
+                if snippetStore.snippets.isEmpty {
+                    Text("还没有片段，点下面的 + 添加")
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(theme.secondaryText)
+                        .padding(.horizontal, theme.groupRowInset)
+                        .frame(height: 40)
+                }
+                ForEach(Array(snippetStore.snippets.enumerated()), id: \.element.id) { index, snippet in
+                    if index > 0 { GroupDivider(theme: theme, inset: theme.groupRowInset) }
+                    SnippetListRow(snippet: snippet, selected: selectedSnippetID == snippet.id, theme: theme)
+                        .contentShape(Rectangle())
+                        .onTapGesture { selectSnippet(snippet) }
+                        .contextMenu { Button("删除") { removeSnippet(snippet) } }
+                }
+                if !snippetStore.snippets.isEmpty { GroupDivider(theme: theme, inset: 0) }
+                // 系统设置同款的 + / − 按钮条
+                HStack(spacing: 0) {
+                    Button(action: addSnippet) {
+                        Image(systemName: "plus").frame(width: 28, height: 24)
+                    }
+                    .help("添加片段")
+                    Rectangle().fill(theme.dividerColor).frame(width: 0.5, height: 14)
+                    Button(action: removeSelectedSnippet) {
+                        Image(systemName: "minus").frame(width: 28, height: 24)
+                    }
+                    .disabled(selectedSnippetID == nil)
+                    .help("删除选中的片段")
+                    Spacer(minLength: 0)
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(theme.secondaryText)
+                .padding(.horizontal, theme.groupedCards ? 6 : -8)
+                .frame(height: 30)
+            }
+
+            if selectedSnippetID != nil { snippetEditor }
+        }
+        // 改动直接落库，不另设保存按钮——设了就得解释"为什么我改了没生效"
+        .onChange(of: draftTitle) { _, _ in commitDraft() }
+        .onChange(of: draftKeyword) { _, _ in commitDraft() }
+        .onChange(of: draftContent) { _, _ in commitDraft() }
+    }
+
+    private var snippetVariablesNote: String {
+        "内容里可以写 " + SnippetExpander.supportedVariables.joined(separator: " ")
+            + "，粘贴时换成当时的日期或剪贴板里的内容。"
+    }
+
+    private var snippetEditor: some View {
+        SettingsGroup(theme: theme, title: "编辑") {
+            SnippetFieldRow(title: "名称", theme: theme) {
+                TextField("", text: $draftTitle)
+                    .textFieldStyle(.roundedBorder)
+                    .controlSize(.large)
+            }
+            GroupDivider(theme: theme, inset: theme.groupRowInset)
+            SnippetFieldRow(title: "触发词", theme: theme) {
+                TextField("", text: $draftKeyword)
+                    .textFieldStyle(.roundedBorder)
+                    .controlSize(.large)
+            }
+            GroupDivider(theme: theme, inset: theme.groupRowInset)
+            SnippetFieldRow(title: "内容", theme: theme) {
+                TextEditor(text: $draftContent)
+                    .font(.system(size: 13))
+                    .foregroundStyle(theme.primaryText)
+                    .scrollContentBackground(.hidden)
+                    .padding(6)
+                    .frame(height: 130)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(theme.primaryText.opacity(0.04))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .strokeBorder(theme.dividerColor, lineWidth: 0.5)
+                    )
+            }
+        }
+    }
+
+    private var selectedSnippet: Snippet? {
+        guard let id = selectedSnippetID else { return nil }
+        return snippetStore.snippets.first { $0.id == id }
+    }
+
+    private func selectSnippet(_ snippet: Snippet) {
+        selectedSnippetID = snippet.id
+        draftTitle = snippet.title
+        draftKeyword = snippet.keyword
+        draftContent = snippet.content
+    }
+
+    private func addSnippet() {
+        let snippet = snippetStore.add(title: "新片段", content: "", keyword: "")
+        selectSnippet(snippet)
+    }
+
+    private func removeSelectedSnippet() {
+        guard let snippet = selectedSnippet else { return }
+        removeSnippet(snippet)
+    }
+
+    private func removeSnippet(_ snippet: Snippet) {
+        if selectedSnippetID == snippet.id {
+            selectedSnippetID = nil
+            draftTitle = ""
+            draftKeyword = ""
+            draftContent = ""
+        }
+        snippetStore.delete(snippet)
+    }
+
+    private func commitDraft() {
+        guard let snippet = selectedSnippet else { return }
+        guard snippet.title != draftTitle
+                || snippet.keyword != draftKeyword
+                || snippet.content != draftContent else { return }
+        snippetStore.update(snippet, title: draftTitle, content: draftContent, keyword: draftKeyword)
+    }
 
     // MARK: 隐私
 
@@ -755,6 +912,67 @@ private struct ThemedSwitch: ToggleStyle {
             .accessibilityElement()
             .accessibilityAddTraits(.isButton)
             .accessibilityValue(on ? "开" : "关")
+    }
+}
+
+/// 片段列表里的一行：名称 + 内容首行，右侧挂触发词和使用次数
+private struct SnippetListRow: View {
+    let snippet: Snippet
+    let selected: Bool
+    let theme: PanelTheme
+
+    var body: some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(snippet.displayTitle)
+                    .font(.system(size: 13))
+                    .foregroundStyle(theme.primaryText)
+                    .lineLimit(1)
+                Text(verbatim: snippet.previewLine.isEmpty ? "（空内容）" : snippet.previewLine)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(theme.secondaryText)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            if !snippet.keyword.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text(snippet.keyword)
+                    .font(.system(size: 11))
+                    .foregroundStyle(theme.accentText)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(theme.accent.opacity(0.14)))
+            }
+            if snippet.useCount > 0 {
+                Text(verbatim: "\(snippet.useCount) 次")
+                    .font(.system(size: 11))
+                    .monospacedDigit()
+                    .foregroundStyle(theme.tertiaryText)
+                    .frame(width: 40, alignment: .trailing)
+            }
+        }
+        .padding(.horizontal, theme.groupRowInset)
+        .frame(height: 46)
+        .background(selected ? theme.accent.opacity(0.12) : Color.clear)
+    }
+}
+
+/// 片段编辑区的一行：左边窄标签，右边控件
+private struct SnippetFieldRow<Control: View>: View {
+    let title: String
+    let theme: PanelTheme
+    @ViewBuilder let control: () -> Control
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            Text(title)
+                .font(.system(size: 13))
+                .foregroundStyle(theme.primaryText)
+                .frame(width: 52, alignment: .leading)
+                .padding(.top, 4)
+            control()
+        }
+        .padding(.horizontal, theme.groupRowInset)
+        .padding(.vertical, 8)
     }
 }
 
