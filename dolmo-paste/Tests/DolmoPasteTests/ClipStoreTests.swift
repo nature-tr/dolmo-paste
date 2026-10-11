@@ -1,5 +1,6 @@
 import XCTest
 import AppKit
+import Carbon
 @testable import DolmoPaste
 
 /// 数据层回归：淘汰、去重、拼音、以及列表状态与数据源的同步
@@ -233,6 +234,110 @@ final class ClipStoreTests: XCTestCase {
             // 没落盘原图（缩略图场景）时至少要有内存里的缩略图可用
             XCTAssertNotNil(store.thumbnailData(for: item))
         }
+    }
+
+    /// 上架文案写了"来源 App 都能搜"，列表里不显示来源名字但必须搜得到
+    @MainActor func testSearchMatchesSourceAppName() throws {
+        let store = try makeStore()
+        let item = ClipItem(kind: .text, textContent: "一段看不出来源的文字",
+                            contentHash: "src-\(UUID().uuidString)",
+                            sourceAppBundleID: "com.apple.Safari", sourceAppName: "Safari")
+        store.insertSample(item)
+
+        XCTAssertTrue(ClipPanelViewModel.matches(item: item, query: "safari"))
+        XCTAssertTrue(ClipPanelViewModel.matches(item: item, query: "SAFARI"))
+        XCTAssertFalse(ClipPanelViewModel.matches(item: item, query: "chrome"))
+
+        let vm = ClipPanelViewModel(store: store)
+        vm.query = "safari"
+        XCTAssertEqual(vm.filtered.count, 1)
+        vm.query = "chrome"
+        XCTAssertTrue(vm.filtered.isEmpty)
+    }
+
+    /// 分页只加不卸，必须有上限；但到底了不能误报"撞上限"
+    @MainActor func testLoadMoreStopsAtCapAndDoesNotFalseAlarmAtEnd() throws {
+        let store = try makeStore()
+        withLimits(history: 3000, image: 200) {
+            for i in 0..<260 { add(store, "条目 \(i)") }
+            store.loadMore()
+            XCTAssertFalse(store.hasMore)
+            XCTAssertFalse(store.hasReachedLoadCap, "取到底了不该提示撞上限")
+        }
+
+        let capped = try makeStore()
+        withLimits(history: 3000, image: 200) {
+            // 超过加载上限（1000）才可能撞顶。
+            // 走 insertSample 而不是 add：add 每次都 prune，prune 是不带 limit 的全量 fetch，
+            // 造 1000+ 条会退化成 O(n²) —— 那本身是个真实的性能隐患，但不属于这个用例要验的东西
+            for i in 0..<1010 {
+                capped.insertSample(ClipItem(kind: .text, textContent: "条目 \(i)", contentHash: "cap-\(i)"))
+            }
+            for _ in 0..<10 { capped.loadMore() }
+            XCTAssertEqual(capped.loadedCount, capped.loadCap)
+            XCTAssertFalse(capped.hasMore)
+            XCTAssertTrue(capped.hasReachedLoadCap, "库里还有更多，要如实提示而不是假装到底")
+            XCTAssertEqual(capped.items.count, capped.loadCap)
+        }
+    }
+
+    /// 缩略图缓存换成了有上限的 NSCache，读两次仍然命中同一份数据
+    @MainActor func testThumbnailCacheStillServesAfterManyReads() throws {
+        let store = try makeStore()
+        withLimits(history: 50, image: 10) {
+            let image = NSImage(size: NSSize(width: 20, height: 10))
+            image.lockFocus()
+            NSColor.orange.setFill()
+            NSRect(x: 0, y: 0, width: 20, height: 10).fill()
+            image.unlockFocus()
+            var content = CapturedContent(kind: .image)
+            content.image = image
+            content.hash = "cache-\(UUID().uuidString)"
+            store.add(content)
+            guard let item = store.items.first(where: { $0.kind == .image }) else {
+                return XCTFail("图片条目没落库")
+            }
+            let first = store.thumbnailData(for: item)
+            XCTAssertNotNil(first)
+            XCTAssertEqual(store.thumbnailData(for: item), first)
+        }
+    }
+
+    /// 异常退出会留下没人引用的图片文件，启动时该清掉
+    @MainActor func testOrphanImagesAreDetectedAndRemoved() throws {
+        let store = try makeStore()
+        // 内存库之间共用同一个临时图片目录，先把别的用例残留的清干净
+        store.pruneOrphanImages()
+        XCTAssertTrue(store.orphanImageNames().isEmpty)
+
+        let image = NSImage(size: NSSize(width: 20, height: 10))
+        image.lockFocus()
+        NSColor.orange.setFill()
+        NSRect(x: 0, y: 0, width: 20, height: 10).fill()
+        image.unlockFocus()
+        var content = CapturedContent(kind: .image)
+        content.image = image
+        content.hash = "keep-\(UUID().uuidString)"
+        store.add(content)
+        XCTAssertTrue(store.orphanImageNames().isEmpty, "刚落库、有条目引用的图片不能算孤儿")
+
+        let orphan = store.imagesDirectory.appendingPathComponent("orphan-fixture.png")
+        try Data("orphan".utf8).write(to: orphan)
+        XCTAssertTrue(store.orphanImageNames().contains("orphan-fixture.png"))
+        XCTAssertEqual(store.pruneOrphanImages(), 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: orphan.path))
+    }
+
+    func testHotkeyDisplayRendersCombos() {
+        XCTAssertEqual(HotkeyDisplay.string(keyCode: UInt32(kVK_ANSI_V), modifiers: UInt32(cmdKey | shiftKey)), "⌘⇧V")
+        XCTAssertEqual(HotkeyDisplay.string(keyCode: UInt32(kVK_ANSI_V), modifiers: UInt32(cmdKey)), "⌘V")
+        // 显示顺序固定为 ⌘⇧⌥⌃，跟按键先后无关
+        XCTAssertEqual(HotkeyDisplay.string(keyCode: 0x7A, modifiers: UInt32(controlKey | optionKey)), "⌥⌃F1")
+        XCTAssertEqual(HotkeyDisplay.string(keyCode: UInt32(kVK_ANSI_V),
+                                            modifiers: UInt32(cmdKey | shiftKey | optionKey | controlKey)), "⌘⇧⌥⌃V")
+        XCTAssertEqual(HotkeyDisplay.string(keyCode: 0x31, modifiers: UInt32(cmdKey | shiftKey)), "⌘⇧空格")
+        // 没收录的键码回退成 #键码，不能显示成空白
+        XCTAssertEqual(HotkeyDisplay.string(keyCode: 999, modifiers: UInt32(cmdKey)), "⌘#999")
     }
 
     func testHugeTextIsCappedBeforeStoring() {

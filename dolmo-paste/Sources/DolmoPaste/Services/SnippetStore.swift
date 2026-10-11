@@ -16,7 +16,18 @@ final class SnippetStore: ObservableObject {
     func refresh() {
         objectWillChange.send()
         let descriptor = FetchDescriptor<Snippet>(sortBy: [SortDescriptor(\.createdAt, order: .reverse)])
-        snippets = (try? context.fetch(descriptor)) ?? []
+        let all = (try? context.fetch(descriptor)) ?? []
+        // 用过的按最近使用排在最前，没用过的按创建时间倒序垫在后面。
+        // 全按创建时间排的话，最常用的那条可能永远沉在最底下——
+        // 片段库的价值是"常用的随手就有"，排序得跟着用不用走
+        snippets = all.sorted { lhs, rhs in
+            switch (lhs.lastUsedAt, rhs.lastUsedAt) {
+            case let (left?, right?): return left > right
+            case (_?, nil): return true
+            case (nil, _?): return false
+            case (nil, nil): return lhs.createdAt > rhs.createdAt
+            }
+        }
     }
 
     @discardableResult
@@ -48,6 +59,46 @@ final class SnippetStore: ObservableObject {
         snippet.lastUsedAt = Date()
         try? context.save()
         refresh()
+    }
+
+    // MARK: 导入 / 导出
+
+    /// 换 Mac 不用重敲一遍所有片段，这是片段库最容易流失用户的场景
+    struct Payload: Codable {
+        var title: String
+        var content: String
+        var keyword: String
+    }
+
+    func exportJSON() -> Data? {
+        let payload = snippets.map { Payload(title: $0.title, content: $0.content, keyword: $0.keyword) }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return try? encoder.encode(payload)
+    }
+
+    /// - Returns: 新增的条数。标题 + 内容都一样的视为重复，跳过，不产生两份
+    @discardableResult
+    func importJSON(_ data: Data) -> Int {
+        guard let payload = try? JSONDecoder().decode([Payload].self, from: data) else { return 0 }
+        var existing = Set(snippets.map { Self.dedupKey(title: $0.title, content: $0.content) })
+        var added = 0
+        for entry in payload {
+            let key = Self.dedupKey(title: entry.title, content: entry.content)
+            guard !existing.contains(key) else { continue }
+            context.insert(Snippet(title: entry.title, content: entry.content, keyword: entry.keyword))
+            existing.insert(key)
+            added += 1
+        }
+        if added > 0 {
+            try? context.save()
+            refresh()
+        }
+        return added
+    }
+
+    private static func dedupKey(title: String, content: String) -> String {
+        "\(title)\u{1F}\(content)"
     }
 
     /// 查询：标题 / 内容 / 触发词任一命中

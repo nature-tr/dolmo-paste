@@ -469,7 +469,10 @@ final class ClipPanelController {
         guard !preview.isKey else { return }
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isVisible, !self.panel.isKeyWindow, !self.preview.isKey else { return }
-            self.hide()
+            // 走到这里意味着用户已经把焦点给了别处（另一个 App、桌面、或自己的设置窗口）。
+            // 不能再 activate 旧 App：那会把焦点硬抢回去，表现是"点一下别的窗口又被弹回来"。
+            // 只有用户主动关闭（Esc）或选中粘贴时才需要还焦点，那两条路径走的是默认参数
+            self.hide(returnFocus: false)
         }
     }
 }

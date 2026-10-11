@@ -170,6 +170,13 @@ struct ClipPanelView: View {
                         Color.clear
                             .frame(height: 1)
                             .onAppear { viewModel.storeRef.loadMore() }
+                    } else if viewModel.storeRef.hasReachedLoadCap {
+                        // 撞到加载上限了：如实告诉用户还有更多，别让他以为历史就这么点
+                        Text(verbatim: "已加载 \(viewModel.storeRef.loadCap) 条，再往上请用搜索缩小范围")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(theme.tertiaryText)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
                     }
                 }
                 .padding(.vertical, theme.listVerticalPadding)

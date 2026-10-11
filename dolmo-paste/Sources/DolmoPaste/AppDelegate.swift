@@ -43,10 +43,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             Task { @MainActor in self.panelController.toggle() }
         }
-        if !HotkeyManager.shared.register() {
-            // 不能只打日志：用户会以为应用没启动。明确告诉他热键被占用，还有菜单栏入口可用
+        if !HotkeyManager.shared.registerFromSettings() {
+            // 不能只打日志：用户会以为应用没启动。明确告诉他热键被占用，还有菜单栏入口可用，
+            // 并且这里就是能改热键的地方——不用再绕道系统设置
+            let keys = AppSettings.shared.hotkeyDisplayString
             Task { @MainActor in
-                Toast.shared.show("⌘⇧V 已被其他 App 占用，请点菜单栏图标打开（可在系统设置里改冲突的快捷键）", duration: 5)
+                Toast.shared.show("\(keys) 已被其他 App 占用，请点菜单栏图标打开（可在设置 → 通用里换成别的组合）", duration: 5)
             }
         }
 
@@ -67,6 +69,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 1_500_000_000)
             store.backfillIcons()
+            // 顺手清掉没人引用的图片文件：淘汰/删除正常都会删，异常退出才会残留
+            store.pruneOrphanImages()
         }
     }
 

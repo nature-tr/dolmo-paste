@@ -21,6 +21,7 @@ final class ClipStore: ObservableObject {
 
     /// - Parameter inMemory: 截图评审模式用，数据只在内存，不碰用户真实历史
     init(inMemory: Bool = false) throws {
+        thumbnailCache.countLimit = Self.thumbnailCacheLimit
         let configuration: ModelConfiguration
         if inMemory {
             imagesDirectory = FileManager.default.temporaryDirectory
@@ -54,15 +55,27 @@ final class ClipStore: ObservableObject {
     /// 首屏只取这么多条。上限能设到 5000，一次性全量 fetch 每条还带缩略图 blob，
     /// 常驻内存会是几百 MB，唤起面板明显卡。改成先取 200，滚到底再追加
     private static let pageSize = 200
-    private var loadedCount = 0
+    /// 已加载条数的硬上限。分页只加不卸，不设顶的话上限调到 5000 就会全量常驻内存
+    /// （每条都带来源 App 图标 blob）。与其无限加载，不如提示用搜索缩小范围
+    private static let maxLoadedCount = 1000
+    private(set) var loadedCount = 0
     /// 上一次 fetch 取到的比 limit 少，说明已经到底了
     private var reachedEnd = false
 
     /// 还有没有没加载的（列表滚到底时用它决定要不要继续取）
     var hasMore: Bool {
         guard !reachedEnd else { return false }
+        guard loadedCount < Self.maxLoadedCount else { return false }
         return loadedCount < settings.historyLimit + settings.imageLimit
     }
+
+    /// 撞到加载上限、但库里其实还有更多。列表底部据此提示，而不是假装到底了
+    var hasReachedLoadCap: Bool {
+        !reachedEnd && loadedCount >= Self.maxLoadedCount
+    }
+
+    /// 加载上限，列表底部提示里要给用户看具体数字
+    var loadCap: Int { Self.maxLoadedCount }
 
     func refresh() {
         // items 是 private(set)，外部改不了它，但删除/清除/淘汰后必须显式通知：
@@ -71,7 +84,7 @@ final class ClipStore: ObservableObject {
         loadedCount = min(max(settings.historyLimit + settings.imageLimit, Self.pageSize), Self.pageSize)
         items = fetch(limit: loadedCount)
         reachedEnd = items.count < loadedCount
-        thumbnailCache.removeAll()
+        thumbnailCache.removeAllObjects()
         onDidChange?()
     }
 
@@ -93,15 +106,19 @@ final class ClipStore: ObservableObject {
 
     // MARK: - 缩略图：按需读，不跟着条目一起常驻
 
-    private var thumbnailCache: [String: Data] = [:]
+    /// 缩略图缓存。用 NSCache 而不是字典：字典没有淘汰，滚一遍全部图片就都常驻了
+    /// （400px 边长的 PNG 约 50–150KB，5000 张最坏几百 MB）。NSCache 还有内存压力时自动清的好处
+    private let thumbnailCache = NSCache<NSString, NSData>()
+    private static let thumbnailCacheLimit = 200
 
     /// 列表滚到哪读到哪。缩略图 blob 全部常驻是内存大头，改成按文件名惰性取
     func thumbnailData(for item: ClipItem) -> Data? {
         guard let name = item.imageFileName else { return item.thumbnailData }
-        if let cached = thumbnailCache[name] { return cached }
+        let key = name as NSString
+        if let cached = thumbnailCache.object(forKey: key) { return cached as Data }
         let url = imagesDirectory.appendingPathComponent(name)
         let data = try? Data(contentsOf: url)
-        if let data { thumbnailCache[name] = data }
+        if let data { thumbnailCache.setObject(data as NSData, forKey: key) }
         return data ?? item.thumbnailData
     }
 
@@ -301,6 +318,34 @@ final class ClipStore: ObservableObject {
             try? context.save()
             refresh()
         }
+    }
+
+    // MARK: - 孤儿图片回收
+
+    /// 磁盘上有、但没有任何条目引用的图片文件名。
+    /// 淘汰/删除都走 removeItem 会删文件，但异常退出、进程被杀时会留下孤儿，
+    /// 日积月累是纯浪费的磁盘占用。这里只算不删，方便测试
+    func orphanImageNames() -> [String] {
+        guard let all = try? context.fetch(FetchDescriptor<ClipItem>()) else { return [] }
+        let referenced = Set(all.compactMap { $0.imageFileName })
+        // 缩略图存不进库、退化成内存 blob 的条目没有文件名，但它们也没占磁盘，不用管
+        let contents = (try? FileManager.default.contentsOfDirectory(atPath: imagesDirectory.path)) ?? []
+        return contents.filter { name in
+            // 只认我们自己写的 .png，目录里万一有别的东西不能动
+            guard name.hasSuffix(".png") else { return false }
+            return !referenced.contains(name)
+        }
+    }
+
+    /// - Returns: 删掉的文件数
+    @discardableResult
+    func pruneOrphanImages() -> Int {
+        let orphans = orphanImageNames()
+        guard !orphans.isEmpty else { return 0 }
+        for name in orphans {
+            try? FileManager.default.removeItem(at: imagesDirectory.appendingPathComponent(name))
+        }
+        return orphans.count
     }
 
     // MARK: - 操作

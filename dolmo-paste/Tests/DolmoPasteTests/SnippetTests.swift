@@ -197,6 +197,50 @@ final class SnippetTests: XCTestCase {
         XCTAssertEqual(vm.snippetIndex, 0)
     }
 
+    /// 用过的排最前，排序得跟着用不用走，不能永远按创建时间
+    @MainActor func testUsedSnippetsSortBeforeUnused() throws {
+        let store = try makeStore()
+        let snippets = store.snippetStore!
+        let a = snippets.add(title: "A", content: "1", keyword: "")
+        let b = snippets.add(title: "B", content: "2", keyword: "")
+        let c = snippets.add(title: "C", content: "3", keyword: "")
+
+        // 都没用过：按创建时间倒序
+        XCTAssertEqual(snippets.snippets.map(\.displayTitle), ["C", "B", "A"])
+        snippets.markUsed(a)
+        XCTAssertEqual(snippets.snippets.map(\.displayTitle), ["A", "C", "B"])
+        snippets.markUsed(c)
+        // 都用过了就按最近使用倒序，C 是后用的
+        XCTAssertEqual(snippets.snippets.map(\.displayTitle), ["C", "A", "B"])
+        XCTAssertEqual(snippets.snippets.last?.displayTitle, "B", "没用过的永远垫底")
+    }
+
+    /// 换 Mac 不用重敲一遍：导出 → 新库导入要能还原，且重复导入不产生两份
+    @MainActor func testExportImportRoundTrip() throws {
+        let store = try makeStore()
+        let snippets = store.snippetStore!
+        _ = snippets.add(title: "邮箱", content: "a@b.com", keyword: "mail")
+        _ = snippets.add(title: "签名", content: "此致敬礼", keyword: "sig")
+
+        guard let data = snippets.exportJSON() else { return XCTFail("导出失败") }
+        XCTAssertEqual(snippets.importJSON(data), 0, "同一份内容再导一次不该新增")
+        XCTAssertEqual(snippets.snippets.count, 2)
+
+        let other = try makeStore()
+        XCTAssertEqual(other.snippetStore!.importJSON(data), 2)
+        XCTAssertEqual(Set(other.snippetStore!.snippets.map(\.displayTitle)), ["邮箱", "签名"])
+        XCTAssertEqual(other.snippetStore!.snippets.first { $0.keyword == "mail" }?.content, "a@b.com")
+
+        // 标题相同但内容改过 → 算新片段，不能覆盖掉旧的
+        let edited = String(data: data, encoding: .utf8)!
+            .replacingOccurrences(of: "a@b.com", with: "c@d.com")
+        XCTAssertEqual(other.snippetStore!.importJSON(Data(edited.utf8)), 1)
+        XCTAssertEqual(other.snippetStore!.snippets.count, 3)
+
+        // 不是 JSON 要返回 0，不能崩
+        XCTAssertEqual(other.snippetStore!.importJSON(Data("not json".utf8)), 0)
+    }
+
     /// 唤起时重置：上一轮的片段选中不能带过来
     @MainActor func testResetClearsSnippetSelection() throws {
         let store = try makeStore()

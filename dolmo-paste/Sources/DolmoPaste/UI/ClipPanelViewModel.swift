@@ -238,6 +238,9 @@ final class ClipPanelViewModel: ObservableObject {
         let q = query.lowercased()
         if item.textContent.localizedCaseInsensitiveContains(q) { return true }
         if !item.fileNames.isEmpty, item.fileNames.joined(separator: " ").localizedCaseInsensitiveContains(q) { return true }
+        // 来源 App 也能当搜索词：打"safari"就能把 Safari 里复制的都捞出来。
+        // 列表里不显示来源 App 名字（前导图标已经说明了），但搜得到
+        if let app = item.sourceAppName, app.localizedCaseInsensitiveContains(q) { return true }
         let ocr = item.ocrRecognizedText
         if !ocr.isEmpty, ocr.localizedCaseInsensitiveContains(q) { return true }
         if let pinyin = item.pinyinIndex, !pinyin.isEmpty {

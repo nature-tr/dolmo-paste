@@ -15,6 +15,8 @@ final class AppSettings: ObservableObject {
         static let autoPaste = "autoPaste"
         static let launchAtLogin = "launchAtLogin"
         static let panelStyle = "panelStyle"
+        static let hotkeyKeyCode = "hotkeyKeyCode"
+        static let hotkeyModifiers = "hotkeyModifiers"
     }
 
     private let defaults = UserDefaults.standard
@@ -53,6 +55,14 @@ final class AppSettings: ObservableObject {
     @Published var panelStyle: PanelStyleKind {
         didSet { defaults.set(panelStyle.rawValue, forKey: Key.panelStyle) }
     }
+    /// 唤起浮窗的全局热键。Carbon 虚拟键码 + Carbon 修饰键掩码，
+    /// 存 Int 而不是 UInt32：UserDefaults 对 UInt32 没有对应的读取方法
+    @Published var hotkeyKeyCode: Int {
+        didSet { defaults.set(hotkeyKeyCode, forKey: Key.hotkeyKeyCode) }
+    }
+    @Published var hotkeyModifiers: Int {
+        didSet { defaults.set(hotkeyModifiers, forKey: Key.hotkeyModifiers) }
+    }
 
     private init() {
         let registered: [String: Any] = [
@@ -65,6 +75,8 @@ final class AppSettings: ObservableObject {
             Key.ocrEnabled: false,
             Key.excludedBundleIDs: Array(Privacy.defaultExcludedApps.keys),
             Key.panelStyle: PanelStyleKind.system.rawValue,
+            Key.hotkeyKeyCode: Int(HotkeyManager.defaultKeyCode),
+            Key.hotkeyModifiers: Int(HotkeyManager.defaultModifiers),
         ]
         defaults.register(defaults: registered)
 
@@ -77,7 +89,14 @@ final class AppSettings: ObservableObject {
         panelStyle = PanelStyleKind(rawValue: defaults.string(forKey: Key.panelStyle) ?? "") ?? .system
         ocrEnabled = defaults.bool(forKey: Key.ocrEnabled)
         excludedBundleIDs = defaults.stringArray(forKey: Key.excludedBundleIDs) ?? Array(Privacy.defaultExcludedApps.keys)
+        hotkeyKeyCode = defaults.integer(forKey: Key.hotkeyKeyCode)
+        hotkeyModifiers = defaults.integer(forKey: Key.hotkeyModifiers)
     }
 
     var excludedBundleIDSet: Set<String> { Set(excludedBundleIDs) }
+
+    /// 当前热键的显示文本，例如 "⌘⇧V"
+    var hotkeyDisplayString: String {
+        HotkeyDisplay.string(keyCode: UInt32(hotkeyKeyCode), modifiers: UInt32(hotkeyModifiers))
+    }
 }

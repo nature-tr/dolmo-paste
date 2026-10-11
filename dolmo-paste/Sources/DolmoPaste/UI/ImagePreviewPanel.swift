@@ -131,11 +131,12 @@ struct HoverPreviewView: View {
             RoundedRectangle(cornerRadius: theme.cornerRadius, style: .continuous)
                 .strokeBorder(theme.dividerColor.opacity(0.8), lineWidth: 0.5)
         )
-        // 窗口是 titled 的（原生可缩放的前提），SwiftUI 会给顶部加 32pt 安全区，
-        // 这里自己管顶部，不然卡片上方会空一条
-        .ignoresSafeArea()
         // 窗口可以被拖得跟图片比例不一致，多出来的地方填窗口底色，不留透明洞
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // 窗口是 titled 的（原生可缩放的前提），SwiftUI 会给顶部加 32pt 安全区，
+        // 这里自己管顶部，不然卡片上方会空一条。
+        // 必须写在 frame 之后：frame 会把视图重新套回安全区里，放在它前面等于没写
+        .ignoresSafeArea()
     }
 
     private var footer: some View {

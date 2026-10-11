@@ -49,6 +49,12 @@ struct MainWindowView: View {
     @State private var showClearConfirm = false
     @State private var stats = ClipStore.StorageStats()
 
+    /// 当前热键。从设置里读一次，之后由录入控件驱动；
+    /// HotkeyManager.update 撞键时会回滚设置，这里必须跟着回滚，不能只认 @State
+    @State private var hotkeyCode = UInt32(AppSettings.shared.hotkeyKeyCode)
+    @State private var hotkeyModifiers = UInt32(AppSettings.shared.hotkeyModifiers)
+    @State private var hotkeyError: String?
+
     /// 片段编辑：先选一条再改下面的三栏，改动直接落库
     @State private var selectedSnippetID: UUID?
     @State private var draftTitle = ""
@@ -213,7 +219,14 @@ struct MainWindowView: View {
                     .toggleStyle(ThemedSwitch(theme: theme))
                 }
                 GroupDivider(theme: theme)
-                ShortcutRow(text: "唤起剪贴板历史", keys: "⌘⇧V", theme: theme)
+                SettingRow(title: "唤起快捷键", subtitle: hotkeyError ?? "点右边再按下新的组合键，Esc 取消", theme: theme) {
+                    HotkeyRecorder(
+                        keyCode: hotkeyCode,
+                        modifiers: hotkeyModifiers,
+                        onCommit: { code, modifiers in applyHotkey(code: code, modifiers: modifiers) }
+                    )
+                    .frame(width: 124, height: 24)
+                }
             }
 
             SettingsGroup(theme: theme, title: "粘贴") {
@@ -228,6 +241,20 @@ struct MainWindowView: View {
                 }
             }
         }
+    }
+
+    /// 改完立刻重注册。撞键时 HotkeyManager 会回滚到旧值，这里跟着回滚显示
+    private func applyHotkey(code: UInt32, modifiers: UInt32) -> Bool {
+        guard HotkeyManager.shared.update(keyCode: code, modifiers: modifiers) else {
+            hotkeyError = "这个组合被系统或其他 App 占用，换一个"
+            hotkeyCode = UInt32(AppSettings.shared.hotkeyKeyCode)
+            hotkeyModifiers = UInt32(AppSettings.shared.hotkeyModifiers)
+            return false
+        }
+        hotkeyCode = code
+        hotkeyModifiers = modifiers
+        hotkeyError = nil
+        return true
     }
 
     /// 只在未授权时出现。授权后这件事就不需要再占位置
@@ -438,6 +465,9 @@ struct MainWindowView: View {
                     .disabled(selectedSnippetID == nil)
                     .help("删除选中的片段")
                     Spacer(minLength: 0)
+                    Button("导入…", action: importSnippets)
+                    Button("导出…", action: exportSnippets)
+                        .disabled(snippetStore.snippets.isEmpty)
                 }
                 .buttonStyle(.plain)
                 .font(.system(size: 12, weight: .medium))
@@ -522,6 +552,28 @@ struct MainWindowView: View {
             draftContent = ""
         }
         snippetStore.delete(snippet)
+    }
+
+    private func importSnippets() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        panel.message = "选择之前导出的片段文件"
+        guard panel.runModal() == .OK, let url = panel.url,
+              let data = try? Data(contentsOf: url) else { return }
+        let count = snippetStore.importJSON(data)
+        Toast.shared.show(count > 0 ? "导入了 \(count) 个片段" : "这个文件里没有新的片段", duration: 2.4)
+    }
+
+    private func exportSnippets() {
+        guard let data = snippetStore.exportJSON() else { return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.json]
+        panel.nameFieldStringValue = "dolmo-paste-snippets.json"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        try? data.write(to: url)
+        // 存完直接把文件在访达里标出来，否则用户不知道存哪了
+        NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
     private func commitDraft() {
@@ -978,20 +1030,6 @@ private struct SnippetFieldRow<Control: View>: View {
     }
 }
 
-/// 纯陈述的一行，没有控件
-private struct StaticRow: View {
-    let title: String
-    let theme: PanelTheme
-
-    var body: some View {
-        Text(title)
-            .font(.system(size: 13))
-            .foregroundStyle(theme.primaryText)
-            .padding(.horizontal, theme.groupRowInset)
-            .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
-    }
-}
-
 /// 数值 + 步进器。数值右对齐，固定宽度，几行上下对齐
 private struct ValueStepper: View {
     let text: String
@@ -1010,28 +1048,6 @@ private struct ValueStepper: View {
                 .labelsHidden()
                 .controlSize(.small)
         }
-    }
-}
-
-/// 快捷键：说明在左，按键在右，像系统菜单那样不加键帽底
-private struct ShortcutRow: View {
-    let text: String
-    let keys: String
-    let theme: PanelTheme
-
-    var body: some View {
-        HStack {
-            Text(text)
-                .font(.system(size: 13))
-                .foregroundStyle(theme.primaryText)
-            Spacer(minLength: 0)
-            Text(keys)
-                .font(.system(size: 13))
-                .monospacedDigit()
-                .foregroundStyle(theme.secondaryText)
-        }
-        .padding(.horizontal, theme.groupRowInset)
-        .frame(height: 40)
     }
 }
 
