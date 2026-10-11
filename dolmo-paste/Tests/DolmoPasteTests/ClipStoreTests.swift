@@ -15,6 +15,19 @@ final class ClipStoreTests: XCTestCase {
         store.add(content)
     }
 
+    @MainActor private func addImage(_ store: ClipStore, _ hash: String) {
+        // 必须真的有 bitmap，否则 pngData 取不到，条目既没落盘原图也没缩略图
+        let image = NSImage(size: NSSize(width: 20, height: 10))
+        image.lockFocus()
+        NSColor.orange.setFill()
+        NSRect(x: 0, y: 0, width: 20, height: 10).fill()
+        image.unlockFocus()
+        var content = CapturedContent(kind: .image)
+        content.image = image
+        content.hash = hash
+        store.add(content)
+    }
+
     /// 上限是全局单例，测完必须还原，避免影响真实设置
     @MainActor private func withLimits(history: Int, image: Int, _ body: () -> Void) {
         let settings = AppSettings.shared
@@ -268,16 +281,55 @@ final class ClipStoreTests: XCTestCase {
         let capped = try makeStore()
         withLimits(history: 3000, image: 200) {
             // 超过加载上限（1000）才可能撞顶。
-            // 走 insertSample 而不是 add：add 每次都 prune，prune 是不带 limit 的全量 fetch，
-            // 造 1000+ 条会退化成 O(n²) —— 那本身是个真实的性能隐患，但不属于这个用例要验的东西
-            for i in 0..<1010 {
-                capped.insertSample(ClipItem(kind: .text, textContent: "条目 \(i)", contentHash: "cap-\(i)"))
-            }
+            // 这里特意走 add()（每次复制都会 prune）而不走 insertSample：
+            // prune 曾经是不带 limit 的全量 fetch，造 1000+ 条会退化成 O(n²)（套件 39s）。
+            // 保留 add() 就是为了让这条用例一直盯着 prune 的开销
+            let started = Date()
+            for i in 0..<1010 { add(capped, "条目 \(i)") }
+            let elapsed = Date().timeIntervalSince(started)
+            // prune 曾是不带 limit 的全量 fetch，同样这段造数要 39s；改成分类
+            // fetchCount + 限量候选后是 16s 上下。留 25s 的口子：超了说明又退化回全量了
+            XCTAssertLessThan(elapsed, 25, "prune 的开销退化成全量 fetch 了（造 1010 条花了 \(elapsed)s）")
             for _ in 0..<10 { capped.loadMore() }
             XCTAssertEqual(capped.loadedCount, capped.loadCap)
             XCTAssertFalse(capped.hasMore)
             XCTAssertTrue(capped.hasReachedLoadCap, "库里还有更多，要如实提示而不是假装到底")
             XCTAssertEqual(capped.items.count, capped.loadCap)
+        }
+    }
+
+    /// prune 改成分类 fetchCount 之后必须验这个：#Predicate 的宏能编译，
+    /// 不代表生成的 SQL 对（enum 在库里的存储形式未必是 rawValue 字符串）。
+    /// 判定失效的表现是某一类永远淘汰不掉
+    @MainActor func testPruneRespectsSeparateImageAndTextLimits() throws {
+        let imageStore = try makeStore()
+        withLimits(history: 100, image: 3) {
+            for i in 0..<10 { addImage(imageStore, "prune-img-\(i)") }
+            imageStore.prune()
+            XCTAssertLessThanOrEqual(imageStore.items.filter { $0.kind == .image }.count, 3, "图片上限没生效")
+        }
+
+        let textStore = try makeStore()
+        withLimits(history: 5, image: 100) {
+            for i in 0..<10 { add(textStore, "文本 \(i)") }
+            textStore.prune()
+            XCTAssertLessThanOrEqual(textStore.items.filter { $0.kind != .image }.count, 5, "文本上限没生效")
+        }
+    }
+
+    /// 固定项不能被淘汰：候选集里混着固定项时要跳过去继续往下取
+    @MainActor func testPruneSkipsPinnedWhenCollectingVictims() throws {
+        let store = try makeStore()
+        withLimits(history: 3, image: 100) {
+            for i in 0..<8 { add(store, "条目 \(i)") }
+            // 固定住最早的两条，它们本该最先被淘汰
+            let pinned = store.items.filter { !$0.isPinned }.suffix(2)
+            for item in pinned { store.togglePin(item) }
+            store.prune()
+            let texts = store.items.filter { $0.kind != .image }
+            XCTAssertLessThanOrEqual(texts.filter { !$0.isPinned }.count, 3)
+            for item in pinned { XCTAssertTrue(item.isPinned) }
+            XCTAssertEqual(Set(store.items.filter { $0.isPinned }.map(\.id)), Set(pinned.map(\.id)))
         }
     }
 

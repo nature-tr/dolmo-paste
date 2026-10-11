@@ -25,6 +25,13 @@ enum ClipKind: String, Codable, CaseIterable, Identifiable {
 final class ClipItem {
     @Attribute(.unique) var id: UUID = UUID()
     var kind: ClipKind = ClipKind.text
+    /// kind 的镜像，只为查询用。
+    /// SwiftData 的 #Predicate 里没法用 enum：`$0.kind == ClipKind.image` 编译不过
+    /// （"key path cannot refer to enum case"），`$0.kind.rawValue` 运行时崩（schema 里
+    /// 没有这一层 key path），捕获成局部常量虽然能编译但 fetchCount 恒返回 0——
+    /// enum 在库里是 Codable 存储，SQL 比不了。所以另外存一个 Bool 当查询键。
+    /// kind 才是真值，这个只是索引；两者在 init 里同步，kind 之后不会再变
+    var isImage: Bool = false
 
     /// 纯文本，用于搜索、预览和纯文本粘贴
     var textContent: String = ""
@@ -76,6 +83,7 @@ final class ClipItem {
     ) {
         self.id = UUID()
         self.kind = kind
+        self.isImage = kind == .image
         self.textContent = textContent
         self.rtfData = rtfData
         self.contentHash = contentHash

@@ -38,7 +38,22 @@ final class ClipStore: ObservableObject {
         context = ModelContext(container)
         context.autosaveEnabled = true
         refresh()
+        // 必须在任何 prune 之前：旧库没有 isImage 列，SwiftData 加列给的默认值是 false，
+        // 不补的话老图片会被当成文本——图片永远淘汰不掉，文本那边还会误删图片
+        backfillIsImage()
         snippetStore = SnippetStore(context: context)
+    }
+
+    /// 按 kind 补齐 isImage。只扫 isImage == false 的，补过之后再启动就只剩非图片了
+    private func backfillIsImage() {
+        let pending = FetchDescriptor<ClipItem>(predicate: #Predicate { !$0.isImage })
+        guard let items = try? context.fetch(pending) else { return }
+        var changed = false
+        for item in items where item.kind == .image {
+            item.isImage = true
+            changed = true
+        }
+        if changed { try? context.save() }
     }
 
     private static func applicationSupportDirectory() throws -> URL {
@@ -290,34 +305,55 @@ final class ClipStore: ObservableObject {
 
     /// 按当前上限淘汰。改小限额时要显式调一次，否则旧数据一直留到下次复制才清
     func prune() {
-        let descriptor = FetchDescriptor<ClipItem>(sortBy: [SortDescriptor(\.copiedAt, order: .reverse)])
-        guard let all = try? context.fetch(descriptor) else { return }
-
-        var changed = false
-        let images = all.filter { $0.kind == .image }
-        let others = all.filter { $0.kind != .image }
-
-        if images.count > settings.imageLimit {
-            let removable = images.filter { !$0.isPinned }
-            let excess = images.count - settings.imageLimit
-            for victim in removable.suffix(min(excess, removable.count)) {
-                removeItem(victim)
-                changed = true
-            }
-        }
-
-        if others.count > settings.historyLimit {
-            let removable = others.filter { !$0.isPinned }
-            let excess = others.count - settings.historyLimit
-            for victim in removable.suffix(min(excess, removable.count)) {
-                removeItem(victim)
-                changed = true
-            }
-        }
-        if changed {
+        let removedImages = pruneCategory(isImage: true, limit: settings.imageLimit)
+        let removedOthers = pruneCategory(isImage: false, limit: settings.historyLimit)
+        if removedImages || removedOthers {
             try? context.save()
             refresh()
         }
+    }
+
+    /// 淘汰某一类（图片 / 非图片）。
+    ///
+    /// 原来是**不带 fetchLimit 的全量 fetch**：每复制一次都要走一遍 prune，
+    /// 上限设到 5000 时每复制一次就加载 5000 个对象（每个还带图标 blob）。
+    /// 实测造 1010 条就把测试套件从 11s 拖到 39s。分两步：
+    ///   1. `fetchCount` 判断是否超限 —— SQL COUNT，不加载对象，日常路径到这就结束了
+    ///   2. 只有真要删时，才按时间正序取"最早的一小批"候选
+    /// - Returns: 是否删过东西
+    @discardableResult
+    private func pruneCategory(isImage: Bool, limit: Int) -> Bool {
+        guard limit > 0 else { return false }
+
+        // 用 isImage（Bool）而不是 kind（enum）当查询键：enum 走不了 predicate
+        let total: Int
+        if isImage {
+            total = (try? context.fetchCount(
+                FetchDescriptor<ClipItem>(predicate: #Predicate { $0.isImage })
+            )) ?? 0
+        } else {
+            total = (try? context.fetchCount(
+                FetchDescriptor<ClipItem>(predicate: #Predicate { !$0.isImage })
+            )) ?? 0
+        }
+        guard total > limit else { return false }
+        let excess = total - limit
+
+        // 最早的一批里可能混着固定项（删不掉），多取这些条才能保证筛完还够删
+        let pinnedCount = (try? context.fetchCount(
+            FetchDescriptor<ClipItem>(predicate: #Predicate { $0.isPinned })
+        )) ?? 0
+        var descriptor = FetchDescriptor<ClipItem>(sortBy: [SortDescriptor(\.copiedAt, order: .forward)])
+        descriptor.fetchLimit = excess + pinnedCount
+        let candidates = (try? context.fetch(descriptor)) ?? []
+
+        var removed = 0
+        for item in candidates where removed < excess {
+            guard (item.kind == .image) == isImage, !item.isPinned else { continue }
+            removeItem(item)
+            removed += 1
+        }
+        return removed > 0
     }
 
     // MARK: - 孤儿图片回收
