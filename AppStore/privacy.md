@@ -89,7 +89,7 @@ dolmo paste 只申请一项系统权限：
 
 如对本隐私政策或数据处理方式有任何疑问，请联系：
 
-- 邮箱：hi@dolmo.top
+- 邮箱：tianrandolmo@gmail.com
 - 支持页面：<https://github.com/nature-tr/dolmo-paste>
 
 ---
