@@ -571,7 +571,14 @@ struct MainWindowView: View {
         panel.allowedContentTypes = [.json]
         panel.nameFieldStringValue = "dolmo-paste-snippets.json"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        try? data.write(to: url)
+        // 不能 try?：沙盒下写不进去（比如上架版少了 user-selected.read-write）
+        // 会一声不响地失败，用户以为导出了其实没有，必须说出来
+        do {
+            try data.write(to: url)
+        } catch {
+            Toast.shared.show("导出失败：\(error.localizedDescription)", duration: 3.2)
+            return
+        }
         // 存完直接把文件在访达里标出来，否则用户不知道存哪了
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
