@@ -31,17 +31,34 @@
 #   本地开发一直是「非沙盒」构建，上架包第一次开沙盒，行为可能不同。
 #   按 metadata.md 第 7 节的 8 条测试步骤走一遍再上传，比被拒一次省一周。
 
-# 2. 上传
-#   方式 A：Xcode → Open Developer Tool → Transporter，拖入 .pkg
-#   方式 B：命令行（App Store Connect API Key）
-xcrun altool --upload-app -f AppStore/build/dolmo-paste.pkg -t macos \
-  --apiKey <AuthKey_XXX.p8> --apiIssuer <issuer-id>
+# 2. 上传（本机没装 Transporter，走命令行）
+./AppStore/upload_appstore.sh
+#   支持两种认证，脚本会自动判断：
+#     A. 设了 ASC_API_KEY / ASC_API_ISSUER 环境变量 → 用 App Store Connect API Key
+#     B. 都没设 → 交互式问 Apple ID + App 专用密码
+#   上传成功后还要回 App Store Connect 网页做「配齐 + 提交审核」，见下面第 3 步
 ```
 
 3. App Store Connect 填表：照 `metadata.md` 逐项粘贴。
 4. 上传截图：`screenshots/01–06.png`（2880×1800）。
 5. 图标：`icon-1024.png`（1024×1024，ASC 只收 PNG 不收 icns）。
 6. 提交审核 → 选 **Manual Release**（手动发布），处理完成后自己点发布。
+
+## 图片规格（已处理，别再退回带透明通道的版本）
+
+App Store 会拒带 alpha 通道的图（图标报 ITMS-90717）：
+
+- `icon-1024.png`：1024×1024，**必须 RGB 无 alpha**。原图带透明已扁平化，
+  透明原稿留在 `icon-1024-with-alpha.orig.png`
+- `screenshots/01–06.png`：2880×1800，**必须 RGB 无 alpha**。原本只是存成 RGBA
+  （alpha 全 255），转 RGB 后画面无损
+
+以后重新生成截图/图标后，用下面的命令确认一遍：
+
+```bash
+sips -g hasAlpha AppStore/icon-1024.png          # 必须是 no
+sips -g hasAlpha AppStore/screenshots/01.png     # 必须是 no
+```
 
 ## 已填好的字段
 
