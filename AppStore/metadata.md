@@ -2,7 +2,7 @@
 
 > 版本：1.0.0（首次提交）
 > 语言：简体中文（zh-Hans）
-> 说明：文中 `<TODO>` 为待你确认/补充的内容。
+> 说明：文中 `<TODO>` 为待你确认/补充的内容。当前版本已无未填项。
 
 ---
 
@@ -160,22 +160,27 @@ dolmo paste 是一款完全在本地运行的 macOS 剪贴板历史工具，常�
 ## 8. 隐私政策 URL
 
 ```
-<TODO: 填写可公开访问的隐私政策网页地址，例如 https://example.com/dolmo-paste/privacy>
+https://dolmo.top/dolmo-paste/privacy
 ```
 
-> 注：App Store 要求提供可访问的隐私政策 URL。仓库内的 `privacy.md` 需先发布成网页再填入此处。
+> 页面源文件：`AppStore/site/privacy/index.html`（本地 `privacy.md` 已转成网页）。
+> 上传前请先本地打开确认排版，并核对页内联系邮箱是否为你能收信的地址。
 
 ## 9. 支持 URL（Support URL）
 
 ```
-<TODO: 填写支持页面或仓库地址>
+https://github.com/nature-tr/dolmo-paste
 ```
+
+> 用户点「支持」会跳到仓库，建议仓库开 Issues，并在 README 里写明反馈方式。
 
 ## 10. 营销 URL（Marketing URL，可选）
 
 ```
-<TODO: 可选>
+https://github.com/nature-tr/dolmo-paste
 ```
+
+> 可选字段，暂时与 Support URL 填同一个。若之后做了产品落地页，改成落地页地址。
 
 ---
 
@@ -197,8 +202,11 @@ dolmo paste 是一款完全在本地运行的 macOS 剪贴板历史工具，常�
 ## 13. 版权（Copyright）
 
 ```
-© 2026 <TODO: 版权持有人名称（个人或公司）>
+© 2026 dolmo cheng
 ```
+
+> 与签名证书 `Apple Distribution: dolmo cheng (7ZYS44VSC3)` 保持一致。
+> 若要以公司名义上架，需先把开发者账号主体改成公司，这里再跟着改。
 
 ---
 
@@ -208,7 +216,7 @@ dolmo paste 是一款完全在本地运行的 macOS 剪贴板历史工具，常�
 | --- | --- |
 | 版本号 | `1.0.0` |
 | 构建号（Build） | 需大于上一次上传，首次可用 `1` 或 `100` |
-| 价格 | <TODO: 免费 / 付费，按你的计划填写> |
+| 价格 | 免费 |
 | 主要语言 | 简体中文 |
 | 应用图标 | 使用 `Resources/AppIcon.icns`，需另导出 1024×1024 PNG 上传 |
 | 截图 | 见 `AppStore/screenshots/`（01–06.png，2880×1800） |

@@ -35,13 +35,20 @@ xcrun altool --upload-app -f AppStore/build/dolmo-paste.pkg -t macos \
 5. 图标：`icon-1024.png`（1024×1024，ASC 只收 PNG 不收 icns）。
 6. 提交审核 → 选 **Manual Release**（手动发布），处理完成后自己点发布。
 
-## 待你补齐的三处
+## 已填好的字段
 
-`metadata.md` 里标了 `<TODO>`：
+`metadata.md` 已无 `<TODO>`，取值如下，如与实际不符直接改：
 
-- 隐私政策 URL（先把 `privacy.md` 发成网页；可用仓库 GitHub Pages）
-- 支持 URL（可用 `https://github.com/nature-tr/dolmo-paste`）
-- 版权持有人名称
+| 字段 | 值 |
+| --- | --- |
+| 隐私政策 URL | `https://dolmo.top/dolmo-paste/privacy` |
+| 支持 URL | `https://github.com/nature-tr/dolmo-paste` |
+| 营销 URL（可选） | 同支持 URL |
+| 版权 | `© 2026 dolmo cheng` |
+| 价格 | 免费 |
+
+隐私政策网页源文件在 `AppStore/site/privacy/index.html`，**需要先部署到 dolmo.top 才能访问**，
+App Store 会检查这个 URL 是不是真的打得开。上线前记得核对页内的联系邮箱。
 
 ## 已知审核风险（重要）
 

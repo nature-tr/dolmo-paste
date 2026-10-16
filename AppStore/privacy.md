@@ -1,7 +1,9 @@
 # dolmo paste 隐私政策
 
-最后更新：2026 年 10 月 10 日
+最后更新：2026 年 10 月 16 日
 适用版本：1.0.0
+
+> 已发布为网页：<https://dolmo.top/dolmo-paste/privacy>（源文件 `AppStore/site/privacy/index.html`）
 
 dolmo paste 是一款完全在本地运行的 macOS 剪贴板历史工具。**你复制的内容只存在这台 Mac 上，不会上传到任何服务器，也不会提供给任何第三方。**
 
@@ -87,8 +89,8 @@ dolmo paste 只申请一项系统权限：
 
 如对本隐私政策或数据处理方式有任何疑问，请联系：
 
-- 邮箱：`<TODO: 填写联系邮箱>`
-- 支持页面：`<TODO: 填写支持页面 / 仓库地址>`
+- 邮箱：hi@dolmo.top
+- 支持页面：<https://github.com/nature-tr/dolmo-paste>
 
 ---
 
