@@ -33,6 +33,10 @@
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <!-- 上架必需：App Store 会按 UTI 给应用分类，缺失直接报 90242 拒收。
+         productivity = 生产率，Utilities（工具）是另一个常见选择 -->
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.productivity</string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
     <key>NSSupportsAutomaticTermination</key>

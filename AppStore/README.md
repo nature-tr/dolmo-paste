@@ -32,12 +32,21 @@
 #   按 metadata.md 第 7 节的 8 条测试步骤走一遍再上传，比被拒一次省一周。
 
 # 2. 上传（本机没装 Transporter，走命令行）
-./AppStore/upload_appstore.sh
-#   支持两种认证，脚本会自动判断：
-#     A. 设了 ASC_API_KEY / ASC_API_ISSUER 环境变量 → 用 App Store Connect API Key
-#     B. 都没设 → 交互式问 Apple ID + App 专用密码
+./AppStore/upload_appstore.sh   # 会自动读取 .env.local 里的凭证
+#   脚本自动判断认证方式：设了上面两个环境变量就走 API Key，
+#   都没设则交互式问 Apple ID + App 专用密码
 #   上传成功后还要回 App Store Connect 网页做「配齐 + 提交审核」，见下面第 3 步
 ```
+
+### 上传凭证（已配好）
+
+- API Key 角色「App 管理」，凭证写在本机 **`AppStore/.env.local`**。
+  这个文件**不进 git**（仓库根 `.gitignore` 已排除）——仓库是 public 的
+- 私钥在 `~/.private_keys/AuthKey_<KEYID>.p8`（权限 600）。
+  **Apple 只给下载一次**，丢了只能去 ASC 吊销重生成，别弄丢
+- 脚本会 source `.env.local`，直接 `./upload_appstore.sh` 就行；
+  想临时换 key 就在外面先 `export`，已设的不会被覆盖
+- 上传一次 3–6 分钟，中途别中断
 
 3. App Store Connect 填表：照 `metadata.md` 逐项粘贴。
 4. 上传截图：`screenshots/01–06.png`（2880×1800）。
@@ -74,6 +83,15 @@ sips -g hasAlpha AppStore/screenshots/01.png     # 必须是 no
 
 隐私政策网页源文件在 `AppStore/site/privacy/index.html`，**需要先部署到 dolmo.top 才能访问**，
 App Store 会检查这个 URL 是不是真的打得开。上线前记得核对页内的联系邮箱。
+
+## 上传时踩过的两个坑（已修，别再去掉）
+
+| 报错 | 原因 | 修法 |
+| --- | --- | --- |
+| `90242` Info.plist must contain LSApplicationCategoryType | Master 上架**必须**声明分类 UTI | `Info-AppStore.plist` 加 `LSApplicationCategoryType` = `public.app-category.productivity` |
+| `90886` 签名 missing an application identifier | 手工 codesign 不会自动注入，Xcode 才会 | `DolmoPaste.entitlements` 加 `com.apple.application-identifier`（`TEAMID.top.dolmo.paste.app`）和 `com.apple.developer.team-identifier`（`TEAMID`） |
+
+> 缺第二项**不会**导致上传失败，只是构建进不了 TestFlight——很容易被忽略。
 
 ## 已知审核风险（重要）
 

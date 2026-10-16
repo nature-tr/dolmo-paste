@@ -25,3 +25,6 @@ DerivedData/
 **/design-review/*.png
 # 上架产物（大体积 .pkg/.app，可随时用 AppStore/build_appstore.sh 重生成）
 AppStore/build/
+
+# 上传凭证（仓库是 public，密钥 ID / Issuer ID 不进 git）
+AppStore/.env.local

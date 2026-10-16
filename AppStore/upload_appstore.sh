@@ -24,6 +24,11 @@ set -euo pipefail
 cd "$(dirname "$0")"
 PKG="build/dolmo-paste.pkg"
 
+# 本机凭证（不进 git）。环境变量已经设了就不覆盖，方便临时用别的 key
+if [ -f .env.local ]; then
+  set -a; . ./.env.local; set +a
+fi
+
 if [ ! -f "$PKG" ]; then
   echo "✗ 找不到 $PKG"
   echo "  先跑一遍: ./AppStore/build_appstore.sh"
