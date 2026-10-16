@@ -30,9 +30,12 @@ IDENTITY=$(security find-identity -v -p codesigning \
   | grep -E '"(3rd Party Mac Developer Application|Apple Distribution)' \
   | head -1 | cut -d'"' -f2 || true)
 # 安装器证书和签名证书是两回事：Apple Distribution 只能签 .app，
-# 签 .pkg 必须另外有 Mac Installer Distribution。之前这里把 Apple Distribution
-# 也算进来，结果 productbuild 报"需要 installer signing identity"才暴露
-INSTALLER_IDENTITY=$(security find-identity -v -p codesigning \
+# 签 .pkg 必须另外有 Mac Installer Distribution。
+#
+# 关键：查询时必须用 -p basic，不能用 -p codesigning。安装器证书签的是安装包
+# 不是可执行代码，根本不出现在 codesigning 那张列表里——之前就是这么查的，
+# 结果证书明明在钥匙串里却一直报"未找到"，白白让人去 Xcode 再申请一遍
+INSTALLER_IDENTITY=$(security find-identity -v -p basic \
   | grep -E '"(3rd Party Mac Developer Installer|Mac Installer Distribution)' \
   | head -1 | cut -d'"' -f2 || true)
 if [ -z "$IDENTITY" ]; then

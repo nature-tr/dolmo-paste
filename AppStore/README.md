@@ -8,9 +8,13 @@
 1. **开发者账号已付费**并已接受最新协议。
 2. **App Store Connect 已建 App 记录**：套装 ID `top.dolmo.paste.app`，平台 macOS。
    若该 ID 已被占用，需先改 `Info-AppStore.plist` 与 `DolmoPaste.entitlements` 里的 Bundle ID。
-3. **发布证书**：Xcode → Settings → Accounts → 选账号 → Manage Certificates → 添加
-   - `Apple Distribution`（或 `3rd Party Mac Developer Application`）
-   - `Mac Installer Distribution`（或 `3rd Party Mac Developer Installer`）
+3. **发布证书**（本机已具备，无需再申请）：
+   - `Apple Distribution: dolmo cheng` — 用来签 `.app`
+   - `3rd Party Mac Developer Installer: dolmo cheng` — 用来签 `.pkg`
+
+   查证书必须用 `security find-identity -v -p basic`，**不能用 `-p codesigning`**。
+   安装器证书签的是安装包不是可执行代码，压根不出现在 codesigning 那张列表里，
+   用 codesigning 查会误判成「没装」。
 4. **描述文件**：Certificates, Identifiers & Profiles → Provisioning Profiles → Mac App Store，
    为 `top.dolmo.paste.app` 创建并下载，保存为 `AppStore/DolmoPaste.provisionprofile`。
 
@@ -22,6 +26,10 @@
 # 1. 生成上架包（.app + .pkg）
 ./AppStore/build_appstore.sh
 #   产出 AppStore/build/dolmo paste.app 与 AppStore/build/dolmo-paste.pkg
+
+# 1.5 强烈建议：先把 .pkg 装起来实机跑一遍
+#   本地开发一直是「非沙盒」构建，上架包第一次开沙盒，行为可能不同。
+#   按 metadata.md 第 7 节的 8 条测试步骤走一遍再上传，比被拒一次省一周。
 
 # 2. 上传
 #   方式 A：Xcode → Open Developer Tool → Transporter，拖入 .pkg
