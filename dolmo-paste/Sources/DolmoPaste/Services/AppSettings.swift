@@ -11,8 +11,6 @@ final class AppSettings: ObservableObject {
         static let maxImageBytes = "maxImageBytes"
         static let ocrEnabled = "ocrEnabled"
         static let excludedBundleIDs = "excludedBundleIDs"
-        static let pasteDelayMs = "pasteDelayMs"
-        static let autoPaste = "autoPaste"
         static let launchAtLogin = "launchAtLogin"
         static let panelStyle = "panelStyle"
         static let hotkeyKeyCode = "hotkeyKeyCode"
@@ -40,14 +38,6 @@ final class AppSettings: ObservableObject {
     @Published var excludedBundleIDs: [String] {
         didSet { defaults.set(excludedBundleIDs, forKey: Key.excludedBundleIDs) }
     }
-    /// 写入剪贴板到模拟 ⌘V 之间的间隔，太短会粘空
-    @Published var pasteDelayMs: Int {
-        didSet { defaults.set(pasteDelayMs, forKey: Key.pasteDelayMs) }
-    }
-    /// 自动模拟 ⌘V（需要辅助功能权限）；关闭则只写回剪贴板
-    @Published var autoPaste: Bool {
-        didSet { defaults.set(autoPaste, forKey: Key.autoPaste) }
-    }
     @Published var launchAtLogin: Bool {
         didSet { defaults.set(launchAtLogin, forKey: Key.launchAtLogin) }
     }
@@ -69,8 +59,6 @@ final class AppSettings: ObservableObject {
             Key.historyLimit: 500,
             Key.imageLimit: 200,
             Key.maxImageBytes: 10 * 1024 * 1024,
-            Key.pasteDelayMs: 60,
-            Key.autoPaste: true,
             Key.launchAtLogin: false,
             Key.ocrEnabled: false,
             Key.excludedBundleIDs: Array(Privacy.defaultExcludedApps.keys),
@@ -83,8 +71,6 @@ final class AppSettings: ObservableObject {
         historyLimit = defaults.integer(forKey: Key.historyLimit)
         imageLimit = defaults.integer(forKey: Key.imageLimit)
         maxImageBytes = defaults.integer(forKey: Key.maxImageBytes)
-        pasteDelayMs = defaults.integer(forKey: Key.pasteDelayMs)
-        autoPaste = defaults.bool(forKey: Key.autoPaste)
         launchAtLogin = defaults.bool(forKey: Key.launchAtLogin)
         panelStyle = PanelStyleKind(rawValue: defaults.string(forKey: Key.panelStyle) ?? "") ?? .system
         ocrEnabled = defaults.bool(forKey: Key.ocrEnabled)

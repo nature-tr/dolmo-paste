@@ -39,14 +39,13 @@ final class ClipPanelController {
 
     private var eventMonitor: Any?
     private var previousApp: NSRunningApplication?
+    /// 每次唤起只提示一次「⌘⌫ 删除」，避免连按退格时提示刷屏
+    private var didHintDeleteShortcut = false
 
     /// 打开设置，并直接落到指定分区（片段行上右键会跳到「片段」）
     var onOpenSettings: ((SettingsSection) -> Void)?
     /// 打开大图查看器。带出 previousApp，查看器关掉后焦点还回原 App
     var onOpenImageViewer: ((ClipItem, NSRunningApplication?) -> Void)?
-
-    private static let axFocusedUIElement = "AXFocusedUIElement" as CFString
-    private static let axFrame = "AXFrame" as CFString
 
     private var theme: PanelTheme { PanelTheme.theme(for: AppSettings.shared.panelStyle) }
 
@@ -130,6 +129,7 @@ final class ClipPanelController {
         guard !isVisible else { return }
         previousApp = NSWorkspace.shared.frontmostApplication
         viewModel.reset()
+        didHintDeleteShortcut = false
         preview.hide()
 
         // 样式可能刚被改过，每次唤起都重挂一遍
@@ -138,7 +138,10 @@ final class ClipPanelController {
         preview.updateTheme(currentTheme)
 
         resize()
-        position(near: caretPoint())
+        // 面板贴着鼠标弹出。以前是贴输入光标，靠 AX 读焦点控件的位置，
+        // 但那属于「把辅助功能用于非无障碍用途」，App Store 明确不接受（2.4.5），
+        // 所以现在只用鼠标位置——鼠标在哪，人就还在哪，注意力一样不用跑远
+        position(near: NSEvent.mouseLocation)
         panel.makeKeyAndOrderFront(nil)
         applySelectionColor(for: currentTheme)
         installEventMonitor()
@@ -180,27 +183,6 @@ final class ClipPanelController {
 
     @objc private func panelDidMove() {
         preview.reposition()
-    }
-
-    /// 优先定位到输入光标（需辅助功能权限），回退到鼠标位置 —— 眼球不用离开正在编辑的地方
-    private func caretPoint() -> CGPoint? {
-        if PasteEngine.isTrusted() {
-            let system = AXUIElementCreateSystemWide()
-            var focusedValue: CFTypeRef?
-            if AXUIElementCopyAttributeValue(system, Self.axFocusedUIElement, &focusedValue) == .success {
-                let focused = focusedValue as! AXUIElement
-                var frameValue: CFTypeRef?
-                if AXUIElementCopyAttributeValue(focused, Self.axFrame, &frameValue) == .success {
-                    var frame = CGRect.zero
-                    if AXValueGetValue(frameValue as! AXValue, .cgRect, &frame), !frame.isNull {
-                        // AX 坐标原点在左上，Cocoa 在左下
-                        let screenHeight = NSScreen.main?.frame.height ?? 900
-                        return CGPoint(x: frame.minX, y: screenHeight - frame.minY)
-                    }
-                }
-            }
-        }
-        return nil
     }
 
     private func position(near point: CGPoint?) {
@@ -297,6 +279,20 @@ final class ClipPanelController {
         let chars = event.charactersIgnoringModifiers ?? ""
 
         if flags.contains(.command) {
+            // ⌘⌫ 才是「删除这条记录」。删除必须带修饰键：
+            // 裸 ⌫ 是搜索框的退格，而在旧逻辑里空搜索时裸 ⌫ 会顺手删掉选中的记录——
+            // 用户清空搜索后习惯性多按一下就误删了历史，这个坑必须堵死
+            if Int(event.keyCode) == kVK_Delete || Int(event.keyCode) == kVK_ForwardDelete {
+                let action = Self.deleteKeyAction(
+                    isSnippetMode: viewModel.isSnippetMode,
+                    query: viewModel.query,
+                    hasSelection: viewModel.selectedItem != nil,
+                    hasCommand: true,
+                    alreadyHinted: didHintDeleteShortcut)
+                guard action == .deleteItem else { return false }
+                deleteSelected()
+                return true
+            }
             if let number = Int(chars), (1...9).contains(number) {
                 viewModel.pasteQuick(number)
                 return true
@@ -371,12 +367,18 @@ final class ClipPanelController {
             if let item = viewModel.selectedItem { openImageViewer(for: item) }
             return true
         case kVK_Delete, kVK_ForwardDelete:
-            // 片段不从浮窗删：误删代价太大，要删去设置页
-            guard !viewModel.isSnippetMode else { return false }
-            // 搜索框非空时必须放行给输入框正常退格，只有空时退格才是"删除记录"
-            if viewModel.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                deleteSelected()
-                return true
+            // 裸 ⌫ / ⌦ 一律还给搜索框，永远不删记录。
+            // 删除改成 ⌘⌫：和 Finder 一致，也不会再把「清空搜索时的多余退格」变成误删。
+            // 顺手提示一次快捷键（每次唤起最多一次），否则新用户找不到删除入口
+            let action = Self.deleteKeyAction(
+                isSnippetMode: viewModel.isSnippetMode,
+                query: viewModel.query,
+                hasSelection: viewModel.selectedItem != nil,
+                hasCommand: false,
+                alreadyHinted: didHintDeleteShortcut)
+            if action == .hintOnce {
+                didHintDeleteShortcut = true
+                Toast.shared.show("按 ⌘⌫ 删除选中的这条", duration: 1.6)
             }
             return false
         default:
@@ -402,7 +404,33 @@ final class ClipPanelController {
         resize()
     }
 
-    /// 合并粘贴：把勾选项拼成一段一次粘出
+    /// 删除键要怎么处理。抽成纯函数是为了能回归测试：
+    /// 这里出过一个很难受的 bug —— 空搜索时裸 ⌫ 会删记录，
+    /// 用户清空搜索后习惯性多按一下，就把历史里的条目删了。
+    enum DeleteKeyAction: Equatable {
+        /// ⌘⌫：删掉选中这条
+        case deleteItem
+        /// 裸 ⌫ 且搜索为空：不删，提示一次快捷键
+        case hintOnce
+        /// 其余情况：交还搜索框，走正常退格
+        case passThrough
+    }
+
+    static func deleteKeyAction(isSnippetMode: Bool,
+                                query: String,
+                                hasSelection: Bool,
+                                hasCommand: Bool,
+                                alreadyHinted: Bool) -> DeleteKeyAction {
+        // 片段不从浮窗删：误删代价太大，要删去设置页
+        if isSnippetMode { return .passThrough }
+        if hasCommand { return .deleteItem }
+        // 裸 ⌫ 永远不删东西；只有「搜索已空 + 有选中 + 还没提示过」才提示一次
+        let isEmpty = query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if isEmpty, hasSelection, !alreadyHinted { return .hintOnce }
+        return .passThrough
+    }
+
+    /// 合并复制：把勾选项拼成一段放进剪贴板，用户按 ⌘V 粘出去
     private func pasteMerged(_ items: [ClipItem]) {
         hide()
         let ok = PasteEngine.writeMergedToPasteboard(items, imagesDirectory: store.imagesDirectory)
@@ -411,18 +439,10 @@ final class ClipPanelController {
             Toast.shared.show("这些内容没有可粘贴的文字", duration: 2.4)
             return
         }
-        guard AppSettings.shared.autoPaste else { return }
-        guard PasteEngine.isTrusted() else {
-            Toast.shared.show("已合并复制到剪贴板，按 ⌘V 粘贴（未授权辅助功能，无法直接粘贴）", duration: 3.2)
-            return
-        }
-        let delay = max(AppSettings.shared.pasteDelayMs, 20)
-        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(delay)) {
-            PasteEngine.postCommandV()
-        }
+        Toast.shared.show("已复制 \(items.count) 条，按 ⌘V 粘贴", duration: 1.8)
     }
 
-    /// 片段：展开变量后写回剪贴板，再模拟 ⌘V。
+    /// 片段：展开变量后写回剪贴板。
     /// {{clipboard}} 要在写之前读——写完系统剪贴板就只剩片段内容了
     private func pasteSnippet(_ snippet: Snippet) {
         let clipboard = NSPasteboard.general.string(forType: .string)
@@ -431,35 +451,21 @@ final class ClipPanelController {
         PasteEngine.writeStringToPasteboard(text)
         store.snippetStore?.markUsed(snippet)
         monitor.skipChangesUpToNow()
-
-        guard AppSettings.shared.autoPaste else { return }
-        guard PasteEngine.isTrusted() else {
-            Toast.shared.show("已复制到剪贴板，按 ⌘V 粘贴（未授权辅助功能，无法直接粘贴）", duration: 3.2)
-            return
-        }
-        let delay = max(AppSettings.shared.pasteDelayMs, 20)
-        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(delay)) {
-            PasteEngine.postCommandV()
-        }
+        Toast.shared.show("已复制片段，按 ⌘V 粘贴", duration: 1.8)
     }
 
-    /// 供大图查看器的「粘贴」复用：写完剪贴板再模拟 ⌘V
+    /// 供大图查看器的「复制」复用：写完剪贴板就完事，粘贴由用户按 ⌘V
     func pasteItem(_ item: ClipItem, plainTextOnly: Bool = false) {
         hide()
-        PasteEngine.writeToPasteboard(item, plainTextOnly: plainTextOnly, imagesDirectory: store.imagesDirectory)
+        let ok = PasteEngine.writeToPasteboard(item, plainTextOnly: plainTextOnly,
+                                               imagesDirectory: store.imagesDirectory)
         monitor.skipChangesUpToNow()
 
-        guard AppSettings.shared.autoPaste else { return }
-
-        // 没有辅助功能权限时只写回了剪贴板，必须明确告知，否则看起来像"点了没反应"
-        guard PasteEngine.isTrusted() else {
-            Toast.shared.show("已复制到剪贴板，按 ⌘V 粘贴（未授权辅助功能，无法直接粘贴）", duration: 3.2)
-            return
-        }
-
-        let delay = max(AppSettings.shared.pasteDelayMs, 20)
-        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(delay)) {
-            PasteEngine.postCommandV()
+        // 文件类在原文件已失效时只会写进文件名。不说清楚，用户会以为粘贴失败
+        if ok {
+            Toast.shared.show("已复制，按 ⌘V 粘贴", duration: 1.6)
+        } else {
+            Toast.shared.show("原文件已不可用，只复制了名称，按 ⌘V 粘贴", duration: 2.6)
         }
     }
 

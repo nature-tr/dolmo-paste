@@ -43,7 +43,6 @@ struct MainWindowView: View {
     @ObservedObject private var snippetStore: SnippetStore
 
     @State private var selection: SettingsSection
-    @State private var trusted = false
     @State private var launchError: String?
     @State private var selectedExcluded: String?
     @State private var showClearConfirm = false
@@ -85,7 +84,6 @@ struct MainWindowView: View {
     static let windowSize = CGSize(width: 780, height: 560)
     private static let sidebarWidth: CGFloat = 180
 
-    private let trustRefresh = Timer.publish(every: 1.5, on: .main, in: .common).autoconnect()
     private var theme: PanelTheme { PanelTheme.theme(for: styleOverride ?? settings.panelStyle) }
 
     private var version: String {
@@ -113,14 +111,7 @@ struct MainWindowView: View {
         .ignoresSafeArea()
         .background(theme.windowBackground)
         .tint(theme.accent)
-        .onAppear {
-            trusted = PasteEngine.isTrusted()
-            stats = store.stats()
-        }
-        .onReceive(trustRefresh) { _ in
-            let now = PasteEngine.isTrusted()
-            if now != trusted { trusted = now }
-        }
+        .onAppear { stats = store.stats() }
         .onChange(of: store.items.count) { _, _ in stats = store.stats() }
         .alert("清除剪贴板历史？", isPresented: $showClearConfirm) {
             Button("清除，保留固定项") {
@@ -205,12 +196,10 @@ struct MainWindowView: View {
 
     private var generalSection: some View {
         VStack(alignment: .leading, spacing: 24) {
-            if !trusted { permissionBanner }
-
             styleSection
 
             SettingsGroup(theme: theme, title: "使用",
-                          footnote: launchError ?? "浮窗里按住 ⌘ 显示序号直达，⇥ 切换类型，→ 看大图。") {
+                          footnote: launchError ?? "选中后内容会进剪贴板，按 ⌘V 粘出去。浮窗里按住 ⌘ 显示序号直达，⇥ 切换类型，→ 看大图。") {
                 SettingRow(title: "开机启动", theme: theme) {
                     Toggle("", isOn: Binding(
                         get: { settings.launchAtLogin },
@@ -228,18 +217,6 @@ struct MainWindowView: View {
                     .frame(width: 124, height: 24)
                 }
             }
-
-            SettingsGroup(theme: theme, title: "粘贴") {
-                SettingRow(title: "选中后直接粘贴", theme: theme) {
-                    Toggle("", isOn: $settings.autoPaste)
-                        .toggleStyle(ThemedSwitch(theme: theme))
-                }
-                GroupDivider(theme: theme)
-                SettingRow(title: "粘贴延迟", subtitle: "个别应用粘不进去时调大", theme: theme) {
-                    ValueStepper(text: "\(settings.pasteDelayMs) ms", theme: theme,
-                                 value: $settings.pasteDelayMs, range: 20...400, step: 10)
-                }
-            }
         }
     }
 
@@ -255,32 +232,6 @@ struct MainWindowView: View {
         hotkeyModifiers = modifiers
         hotkeyError = nil
         return true
-    }
-
-    /// 只在未授权时出现。授权后这件事就不需要再占位置
-    private var permissionBanner: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "exclamationmark.circle.fill")
-                .font(.system(size: 16))
-                .foregroundStyle(theme.accent)
-            VStack(alignment: .leading, spacing: 3) {
-                Text("需要辅助功能权限才能直接粘贴")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(theme.primaryText)
-                Text("没有授权时，内容只放回剪贴板。已授权仍不生效：在列表里删掉旧条目后重新添加。")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(theme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 0)
-            Button("去授权") { PasteEngine.openAccessibilitySettings() }
-                .controlSize(.small)
-        }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(theme.accent.opacity(0.10))
-        )
     }
 
     /// 样式选择直接放在页面上，不再外套一层卡片
@@ -665,7 +616,7 @@ struct MainWindowView: View {
     private static let features: [(String, String)] = [
         // 固定（Pin）不单独占一格：它的承诺就是"永不过期"，和这一格是同一件事
         ("不再丢", "复制新的不会冲掉旧的，固定的永不过期"),
-        ("键盘直达", "⌘⇧V 唤起，⌘1–9 直达，回车就粘"),
+        ("键盘直达", "⌘⇧V 唤起，⌘1–9 直达，回车即复制"),
         ("中文好搜", "打拼音首字母就能命中"),
         ("常用的存成片段", "地址、签名随手粘，日期自动填"),
         ("图里的字也能搜", "截图里的报错也找得回来"),

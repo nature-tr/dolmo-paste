@@ -53,7 +53,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         setupStatusItem()
-        promptAccessibilityIfNeeded()
 
         // 第一次启动主动把主窗口亮出来：菜单栏应用装完只多一个图标，
         // 用户根本不知道装成功了没有
@@ -275,30 +274,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             store.clearAll(includePinned: true)
         default:
             break
-        }
-    }
-
-    // MARK: - 首次权限引导
-
-    private func promptAccessibilityIfNeeded() {
-        let key = "didPromptAccessibility"
-        guard !UserDefaults.standard.bool(forKey: key) else { return }
-        UserDefaults.standard.set(true, forKey: key)
-        guard !PasteEngine.isTrusted() else { return }
-
-        let alert = NSAlert()
-        alert.messageText = "需要辅助功能权限"
-        alert.informativeText = """
-        dolmo paste 用它做两件事：
-        · 选中一条历史后直接粘贴进你正在用的 App，而不是只放回剪贴板
-        · 把浮窗显示在光标旁边
-
-        你复制的内容只存在这台 Mac 上，不会上传。
-        """
-        alert.addButton(withTitle: "前往系统设置")
-        alert.addButton(withTitle: "以后再说")
-        if alert.runModal() == .alertFirstButtonReturn {
-            PasteEngine.openAccessibilitySettings()
         }
     }
 }

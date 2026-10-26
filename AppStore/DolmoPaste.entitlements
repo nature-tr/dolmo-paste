@@ -24,13 +24,15 @@
     <key>com.apple.security.files.user-selected.read-write</key>
     <true/>
 
-    <!-- 模拟 ⌘V 需要辅助功能权限。注意：MAS 审核对这项一向严格，
-         2.4.5 / 5.1.1 条款下有被拒风险，审核备注里已如实说明用途 -->
-    <key>com.apple.security.automation.apple-events</key>
-    <true/>
+    <!-- 不要加 com.apple.security.automation.apple-events。
+         它只服务于「模拟 ⌘V / 控制别的 App」，而 App Store 按 2.4.5 明确
+         不允许把这类能力用于粘贴。现在应用不发送任何 Apple 事件。 -->
 
-    <!-- Vision OCR 在本机跑，不联网；仍声明只读用户选择项以避免权限弹窗歧义 -->
-    <key>com.apple.security.device.audio-input</key>
-    <false/>
+    <!-- ⚠️ 别加任何 value=false 的 entitlement。
+         这里曾经有一行 com.apple.security.device.audio-input = false（复制粘贴残留），
+         结果第一次提审就被打回：Guideline 2.4.5(i)
+         「Entitlement "com.apple.security.device.audio-input" value must not be false」。
+         苹果的规则是：不需要的权限就整条删掉，不能写成 false。
+         Vision OCR、剪贴板、SwiftData 都不需要额外 entitlement。 -->
 </dict>
 </plist>

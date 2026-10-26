@@ -1,20 +1,14 @@
 import AppKit
 import Carbon
 
-/// 粘贴执行器。
-/// 两步：把历史项写回系统剪贴板 → 模拟 ⌘V（需要辅助功能权限）。
-/// 没有权限时退化成"只写回剪贴板"，用户自己按 ⌘V。
+/// 粘贴执行器：只负责把历史项写回系统剪贴板。
+///
+/// ⚠️ 这里**故意不模拟 ⌘V**。App Store 审核 Guideline 2.4.5 明确规定：
+/// 辅助功能（Accessibility）只能用于增强无障碍，不能用来实现「自动粘贴」。
+/// 我们的 1.0 就是因为这个被拒（原文："the app uses Accessibility features to
+/// enable paste function"）。所以选中条目后只写剪贴板，由用户自己按 ⌘V。
+/// 不要再把 CGEvent.post 加回来——加了就上不了架。
 enum PasteEngine {
-    static func isTrusted(prompt: Bool = false) -> Bool {
-        let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: prompt]
-        return AXIsProcessTrustedWithOptions(options)
-    }
-
-    static func openAccessibilitySettings() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-            NSWorkspace.shared.open(url)
-        }
-    }
 
     /// 把历史项写回剪贴板。
     /// - Returns: 是否按预期类型写成功。文件类在**原文件已失效**时返回 false，
@@ -110,17 +104,5 @@ enum PasteEngine {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
-    }
-
-    /// 模拟 ⌘V。必须在面板已关闭、原 App 重新拿到焦点之后调用。
-    static func postCommandV() {
-        let source = CGEventSource(stateID: .combinedSessionState)
-        let keyCode = CGKeyCode(kVK_ANSI_V)
-        let keyDown = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true)
-        keyDown?.flags = .maskCommand
-        let keyUp = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false)
-        keyUp?.flags = .maskCommand
-        keyDown?.post(tap: .cghidEventTap)
-        keyUp?.post(tap: .cghidEventTap)
     }
 }

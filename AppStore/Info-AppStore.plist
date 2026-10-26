@@ -19,8 +19,9 @@
     <string>top.dolmo.paste.app</string>
     <key>CFBundleShortVersionString</key>
     <string>1.0.0</string>
+    <!-- build 2 = 被 2.4.5 拒掉的旧逻辑（含辅助功能模拟 ⌘V），不能再复用 -->
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>3</string>
     <key>CFBundleDevelopmentRegion</key>
     <string>zh_CN</string>
     <key>CFBundleLocalizations</key>
@@ -42,10 +43,15 @@
     <key>NSSupportsAutomaticTermination</key>
     <false/>
 
-    <!-- 辅助功能用途说明：模拟 ⌘V 把选中内容粘进当前 App -->
-    <key>NSAccessibilityUsageDescription</key>
-    <string>用于把选中的历史内容直接粘贴到你正在使用的 App（模拟 ⌘V），以及把浮窗显示在输入光标旁边。不授权则内容只回到剪贴板。</string>
-    <key>NSAppleEventsUsageDescription</key>
-    <string>用于把选中的历史内容粘贴到你正在使用的 App。</string>
+    <!-- 出口合规：声明「不使用非豁免加密」，App Store Connect 会自动置
+         usesNonExemptEncryption = false，不必每次上传后去网页答一遍加密问题。
+         本 App 无网络请求、无自研/第三方加密，只用到系统提供的标准能力。
+         注意：这个 key 只对「打包时带上它」的构建生效，历史上的 build 1/2 没带 -->
+    <key>ITSAppUsesNonExemptEncryption</key>
+    <false/>
+
+    <!-- 不要再加 NSAccessibilityUsageDescription / NSAppleEventsUsageDescription。
+         1.0 因为「用辅助功能模拟 ⌘V」被按 Guideline 2.4.5 拒绝，
+         现在应用完全不碰辅助功能：选中条目只写剪贴板，粘贴由用户按 ⌘V。 -->
 </dict>
 </plist>
