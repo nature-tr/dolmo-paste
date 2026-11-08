@@ -18,10 +18,10 @@
     <key>PRODUCT_BUNDLE_IDENTIFIER</key>
     <string>top.dolmo.paste.app</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0.0</string>
-    <!-- build 2 = 被 2.4.5 拒掉的旧逻辑（含辅助功能模拟 ⌘V），不能再复用 -->
+    <string>1.1.0</string>
+    <!-- build 3 = 1.0 已上架；4 = 1.1 恢复「选中即粘」 -->
     <key>CFBundleVersion</key>
-    <string>3</string>
+    <string>4</string>
     <key>CFBundleDevelopmentRegion</key>
     <string>zh_CN</string>
     <key>CFBundleLocalizations</key>
@@ -50,8 +50,8 @@
     <key>ITSAppUsesNonExemptEncryption</key>
     <false/>
 
-    <!-- 不要再加 NSAccessibilityUsageDescription / NSAppleEventsUsageDescription。
-         1.0 因为「用辅助功能模拟 ⌘V」被按 Guideline 2.4.5 拒绝，
-         现在应用完全不碰辅助功能：选中条目只写剪贴板，粘贴由用户按 ⌘V。 -->
+    <!-- 不要声明 NSAccessibilityUsageDescription / NSAppleEventsUsageDescription。
+         本 App 只用辅助功能授权合成一次 ⌘V，不读取任何界面元素、不发 Apple 事件。
+         商店里在售的 Maccy（org.p0deje.Maccy）是同样的形状，它也没有声明这一项。 -->
 </dict>
 </plist>

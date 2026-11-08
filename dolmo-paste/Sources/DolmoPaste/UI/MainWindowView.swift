@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import ServiceManagement
 import SwiftUI
 
@@ -53,6 +54,11 @@ struct MainWindowView: View {
     @State private var hotkeyCode = UInt32(AppSettings.shared.hotkeyKeyCode)
     @State private var hotkeyModifiers = UInt32(AppSettings.shared.hotkeyModifiers)
     @State private var hotkeyError: String?
+
+    /// 自动粘贴是否已获得辅助功能授权。
+    /// 用户是去「系统设置」里勾选的，我们拿不到回调，所以在窗口重新激活时重新问一次；
+    /// 不用定时器——授权状态只在用户离开本 App 时才会变
+    @State private var autoPasteTrusted = PasteEngine.isTrusted
 
     /// 片段编辑：先选一条再改下面的三栏，改动直接落库
     @State private var selectedSnippetID: UUID?
@@ -199,7 +205,9 @@ struct MainWindowView: View {
             styleSection
 
             SettingsGroup(theme: theme, title: "使用",
-                          footnote: launchError ?? "选中后内容会进剪贴板，按 ⌘V 粘出去。浮窗里按住 ⌘ 显示序号直达，⇥ 切换类型，→ 看大图。") {
+                          footnote: launchError ?? (autoPasteTrusted
+                              ? "选中后直接粘进当前 App。浮窗里按住 ⌘ 显示序号直达，⇥ 切换类型，→ 看大图。"
+                              : "选中后内容会进剪贴板，按 ⌘V 粘出去。浮窗里按住 ⌘ 显示序号直达，⇥ 切换类型，→ 看大图。")) {
                 SettingRow(title: "开机启动", theme: theme) {
                     Toggle("", isOn: Binding(
                         get: { settings.launchAtLogin },
@@ -216,6 +224,34 @@ struct MainWindowView: View {
                     )
                     .frame(width: 124, height: 24)
                 }
+                GroupDivider(theme: theme)
+                autoPasteRow
+            }
+        }
+        .onAppear { autoPasteTrusted = PasteEngine.isTrusted }
+        // 授权是在「系统设置」里勾的，我们收不到回调；窗口重新激活时再问一次就够
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            autoPasteTrusted = PasteEngine.isTrusted
+        }
+    }
+
+    /// 自动粘贴。没授权时给一条明确的出路，不弹向导、不打断使用
+    private var autoPasteRow: some View {
+        SettingRow(title: "自动粘贴",
+                   subtitle: autoPasteTrusted
+                       ? "选中后直接粘进当前 App，不用再按一次 ⌘V"
+                       : "需在「系统设置 → 隐私与安全性 → 辅助功能」里勾选本 App；没勾时选中只进剪贴板",
+                   theme: theme) {
+            if autoPasteTrusted {
+                Text("已开启")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(theme.secondaryText)
+            } else {
+                Button("去开启") { PasteEngine.openAccessibilitySettings() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(theme.accent)
+                    .help("打开系统设置的辅助功能面板")
             }
         }
     }

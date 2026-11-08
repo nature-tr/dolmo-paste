@@ -15,6 +15,7 @@ final class AppSettings: ObservableObject {
         static let panelStyle = "panelStyle"
         static let hotkeyKeyCode = "hotkeyKeyCode"
         static let hotkeyModifiers = "hotkeyModifiers"
+        static let autoPasteHintShown = "autoPasteHintShown"
     }
 
     private let defaults = UserDefaults.standard
@@ -80,6 +81,14 @@ final class AppSettings: ObservableObject {
     }
 
     var excludedBundleIDSet: Set<String> { Set(excludedBundleIDs) }
+
+    /// 「没开自动粘贴」的提示是否已经说过一次。
+    /// 故意**不**做成 @Published：它不驱动任何界面，
+    /// 放进去只会让每次粘贴都白触发一轮重绘
+    var autoPasteHintShown: Bool {
+        get { defaults.bool(forKey: Key.autoPasteHintShown) }
+        set { defaults.set(newValue, forKey: Key.autoPasteHintShown) }
+    }
 
     /// 当前热键的显示文本，例如 "⌘⇧V"
     var hotkeyDisplayString: String {

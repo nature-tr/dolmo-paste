@@ -430,7 +430,25 @@ final class ClipPanelController {
         return .passThrough
     }
 
-    /// 合并复制：把勾选项拼成一段放进剪贴板，用户按 ⌘V 粘出去
+    /// 写完剪贴板后的统一收尾：有授权就顺手合成一次 ⌘V。
+    /// 返回 true 表示已经自动粘出去了，调用方就不该再说「按 ⌘V」——
+    /// 三个入口都用这一个判断，否则很容易出现「自动粘贴开着还提示按 ⌘V」的自相矛盾。
+    @discardableResult
+    private func autoPasteIfPossible() -> Bool {
+        let trusted = PasteEngine.isTrusted
+        if trusted { PasteEngine.postCommandV() }
+        return trusted
+    }
+
+    /// 没授权时怎么提示。第一次多说一句「去哪儿开」，之后不再啰嗦
+    private func showManualPasteHint(_ base: String) {
+        let alreadyShown = AppSettings.shared.autoPasteHintShown
+        let text = PasteEngine.manualPasteHint(base, alreadyShown: alreadyShown)
+        if !alreadyShown { AppSettings.shared.autoPasteHintShown = true }
+        Toast.shared.show(text, duration: text.count > base.count ? 3.4 : 1.8)
+    }
+
+    /// 合并粘贴：把勾选项拼成一段。有授权就直接粘出去
     private func pasteMerged(_ items: [ClipItem]) {
         hide()
         let ok = PasteEngine.writeMergedToPasteboard(items, imagesDirectory: store.imagesDirectory)
@@ -439,7 +457,8 @@ final class ClipPanelController {
             Toast.shared.show("这些内容没有可粘贴的文字", duration: 2.4)
             return
         }
-        Toast.shared.show("已复制 \(items.count) 条，按 ⌘V 粘贴", duration: 1.8)
+        if autoPasteIfPossible() { return }
+        showManualPasteHint("已复制 \(items.count) 条，按 ⌘V 粘贴")
     }
 
     /// 片段：展开变量后写回剪贴板。
@@ -451,23 +470,29 @@ final class ClipPanelController {
         PasteEngine.writeStringToPasteboard(text)
         store.snippetStore?.markUsed(snippet)
         monitor.skipChangesUpToNow()
-        Toast.shared.show("已复制片段，按 ⌘V 粘贴", duration: 1.8)
+        if autoPasteIfPossible() { return }
+        showManualPasteHint("已复制片段，按 ⌘V 粘贴")
     }
 
-    /// 供大图查看器的「复制」复用：写完剪贴板就完事，粘贴由用户按 ⌘V
+    /// 供大图查看器的「复制」复用
     func pasteItem(_ item: ClipItem, plainTextOnly: Bool = false) {
         hide()
         let ok = PasteEngine.writeToPasteboard(item, plainTextOnly: plainTextOnly,
                                                imagesDirectory: store.imagesDirectory)
         monitor.skipChangesUpToNow()
+        let auto = autoPasteIfPossible()
 
         // 文件类在原文件已失效时只会写进文件名。不说清楚，用户会以为粘贴失败
-        if ok {
-            Toast.shared.show("已复制，按 ⌘V 粘贴", duration: 1.6)
-        } else {
-            Toast.shared.show("原文件已不可用，只复制了名称，按 ⌘V 粘贴", duration: 2.6)
+        guard ok else {
+            Toast.shared.show(auto ? "原文件已不可用，只粘贴了名称"
+                                   : "原文件已不可用，只复制了名称，按 ⌘V 粘贴",
+                              duration: 2.6)
+            return
         }
+        if auto { return }
+        showManualPasteHint("已复制，按 ⌘V 粘贴")
     }
+
 
     @objc private func panelDidResignKey() {
         // 点到别的地方就收起来，不用手动 Esc
